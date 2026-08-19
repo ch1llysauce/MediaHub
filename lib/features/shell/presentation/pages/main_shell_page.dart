@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../player/presentation/widgets/mini_player_widget.dart';
+
+
+
 class MainShellPage extends StatelessWidget {
   final StatefulNavigationShell navigationShell;
 
@@ -71,38 +75,45 @@ class MainShellPage extends StatelessWidget {
 
         return Scaffold(
           body: navigationShell,
-          bottomNavigationBar: BottomNavigationBar(
-            currentIndex: navigationShell.currentIndex,
-            onTap: _onDestinationSelected,
-            items: const [
-              BottomNavigationBarItem(
-                icon: Icon(Icons.home_outlined),
-                activeIcon: Icon(Icons.home),
-                label: 'Home',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.video_library_outlined),
-                activeIcon: Icon(Icons.video_library),
-                label: 'Library',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.download_for_offline_outlined),
-                activeIcon: Icon(Icons.download_for_offline),
-                label: 'Downloads',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.queue_music_outlined),
-                activeIcon: Icon(Icons.queue_music),
-                label: 'Playlists',
-              ),
-              BottomNavigationBarItem(
-                icon: Icon(Icons.settings_outlined),
-                activeIcon: Icon(Icons.settings),
-                label: 'Settings',
+          bottomNavigationBar: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const MiniPlayerWidget(),
+              BottomNavigationBar(
+                currentIndex: navigationShell.currentIndex,
+                onTap: _onDestinationSelected,
+                items: const [
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.home_outlined),
+                    activeIcon: Icon(Icons.home),
+                    label: 'Home',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.video_library_outlined),
+                    activeIcon: Icon(Icons.video_library),
+                    label: 'Library',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.download_for_offline_outlined),
+                    activeIcon: Icon(Icons.download_for_offline),
+                    label: 'Downloads',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.queue_music_outlined),
+                    activeIcon: Icon(Icons.queue_music),
+                    label: 'Playlists',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.settings_outlined),
+                    activeIcon: Icon(Icons.settings),
+                    label: 'Settings',
+                  ),
+                ],
               ),
             ],
           ),
         );
+
       },
     );
   }

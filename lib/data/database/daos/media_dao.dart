@@ -70,4 +70,10 @@ class MediaDao extends DatabaseAccessor<AppDatabase> with _$MediaDaoMixin {
   Future<int> deleteMediaRecord(String id) {
     return (delete(mediaItems)..where((tbl) => tbl.id.equals(id))).go();
   }
+
+  /// Update duration for a specific media item
+  Future<void> updateMediaDuration(String id, int durationInSeconds) {
+    return (update(mediaItems)..where((tbl) => tbl.id.equals(id)))
+        .write(MediaItemsCompanion(duration: Value(durationInSeconds)));
+  }
 }

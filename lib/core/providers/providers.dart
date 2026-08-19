@@ -2,11 +2,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/database/app_database.dart';
 import '../../data/database/daos/media_dao.dart';
+import '../../data/database/daos/playlists_dao.dart';
 import '../../data/database/daos/scan_directories_dao.dart';
 import '../../data/repositories/media_repository_impl.dart';
+import '../../data/repositories/playlist_repository_impl.dart';
 import '../../domain/entities/media_item_entity.dart';
 import '../../domain/repositories/media_repository.dart';
+import '../../domain/repositories/playlist_repository.dart';
+import '../services/audio_player_service.dart';
 import '../services/media_scanner_service.dart';
+
 
 /// Database singleton provider
 final appDatabaseProvider = Provider<AppDatabase>((ref) {
@@ -21,6 +26,12 @@ final mediaDaoProvider = Provider<MediaDao>((ref) {
   return db.mediaDao;
 });
 
+/// PlaylistsDao provider
+final playlistsDaoProvider = Provider<PlaylistsDao>((ref) {
+  final db = ref.watch(appDatabaseProvider);
+  return db.playlistsDao;
+});
+
 /// ScanDirectoriesDao provider
 final scanDirectoriesDaoProvider = Provider<ScanDirectoriesDao>((ref) {
   final db = ref.watch(appDatabaseProvider);
@@ -31,6 +42,14 @@ final scanDirectoriesDaoProvider = Provider<ScanDirectoriesDao>((ref) {
 final mediaScannerServiceProvider = Provider<MediaScannerService>((ref) {
   return MediaScannerService();
 });
+
+/// AudioPlayerService provider
+final audioPlayerServiceProvider = Provider<AudioPlayerService>((ref) {
+  final service = AudioPlayerService();
+  ref.onDispose(() => service.dispose());
+  return service;
+});
+
 
 /// MediaRepository provider
 final mediaRepositoryProvider = Provider<MediaRepository>((ref) {
@@ -43,6 +62,12 @@ final mediaRepositoryProvider = Provider<MediaRepository>((ref) {
     scanDirectoriesDao: scanDirectoriesDao,
     scannerService: scannerService,
   );
+});
+
+/// PlaylistRepository provider
+final playlistRepositoryProvider = Provider<PlaylistRepository>((ref) {
+  final playlistsDao = ref.watch(playlistsDaoProvider);
+  return PlaylistRepositoryImpl(playlistsDao: playlistsDao);
 });
 
 /// Reactive stream of all available media items
@@ -61,4 +86,17 @@ final musicMediaStreamProvider = StreamProvider<List<MediaItemEntity>>((ref) {
 final videoMediaStreamProvider = StreamProvider<List<MediaItemEntity>>((ref) {
   final repository = ref.watch(mediaRepositoryProvider);
   return repository.watchMediaByType('video');
+});
+
+/// Reactive stream of all playlists
+final allPlaylistsStreamProvider = StreamProvider((ref) {
+  final repository = ref.watch(playlistRepositoryProvider);
+  return repository.watchAllPlaylists();
+});
+
+/// Reactive stream of media items in a specific playlist
+final playlistItemsStreamProvider =
+    StreamProvider.family<List<MediaItemEntity>, String>((ref, playlistId) {
+  final repository = ref.watch(playlistRepositoryProvider);
+  return repository.watchPlaylistItems(playlistId);
 });

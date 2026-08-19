@@ -5,7 +5,9 @@ import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'daos/favorites_dao.dart';
 import 'daos/media_dao.dart';
+import 'daos/playlists_dao.dart';
 import 'daos/scan_directories_dao.dart';
 import 'tables.dart';
 
@@ -24,6 +26,8 @@ part 'app_database.g.dart';
   daos: [
     MediaDao,
     ScanDirectoriesDao,
+    PlaylistsDao,
+    FavoritesDao,
   ],
 )
 class AppDatabase extends _$AppDatabase {

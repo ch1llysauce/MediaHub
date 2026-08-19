@@ -118,4 +118,9 @@ class MediaRepositoryImpl implements MediaRepository {
   Future<void> removeScanDirectory(String id) async {
     await _scanDirectoriesDao.removeDirectory(id);
   }
+
+  @override
+  Future<void> updateMediaDuration(String id, int durationInSeconds) async {
+    await _mediaDao.updateMediaDuration(id, durationInSeconds);
+  }
 }

@@ -47,6 +47,22 @@ class ScannedMediaFile {
 }
 
 class MediaScannerService {
+  /// Get default device media directories for Android/desktop
+  List<String> getDefaultScanDirectories() {
+    if (Platform.isAndroid) {
+      const base = '/storage/emulated/0';
+      return const [
+        '$base/Music',
+        '$base/Download',
+        '$base/Movies',
+        '$base/DCIM',
+        '$base/Podcasts',
+        '$base/Audiobooks',
+      ];
+    }
+    return const [];
+  }
+
 
   /// Determine if a file path is a supported media format
   bool isSupportedMediaFile(String filePath) {
