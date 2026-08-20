@@ -168,10 +168,28 @@ class DownloadManager {
         );
       }
 
+      final streamUrlLower = mediaInfo.streamUrl.toLowerCase();
+      final String referer;
+      if (streamUrlLower.contains('instagram') || streamUrlLower.contains('cdninstagram')) {
+        referer = 'https://www.instagram.com/';
+      } else if (streamUrlLower.contains('facebook') || streamUrlLower.contains('fbcdn')) {
+        referer = 'https://www.facebook.com/';
+      } else if (streamUrlLower.contains('tiktok') || streamUrlLower.contains('tikwm')) {
+        referer = 'https://www.tiktok.com/';
+      } else {
+        referer = 'https://www.google.com/';
+      }
+
       await _dio.download(
         mediaInfo.streamUrl,
         targetPath,
         cancelToken: cancelToken,
+        options: Options(
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': referer,
+          },
+        ),
         onReceiveProgress: (received, total) {
           if (total > 0) {
             final progress = (received / total).clamp(0.0, 1.0);
@@ -179,6 +197,7 @@ class DownloadManager {
           }
         },
       );
+
 
       if (cancelToken.isCancelled) return;
 

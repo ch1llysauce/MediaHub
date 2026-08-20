@@ -259,40 +259,240 @@ class InstagramSourceProvider implements MediaSourceProvider {
       connectTimeout: const Duration(seconds: 12),
       receiveTimeout: const Duration(seconds: 12),
       followRedirects: true,
+      validateStatus: (status) => status != null && status < 500,
     ));
 
-    final ddUrl = url.toString().replaceAll('instagram.com', 'ddinstagram.com');
+    var targetUrl = url.toString();
     try {
-      final response = await dio.get<String>(
-        ddUrl,
+      // Follow redirects first to resolve any shortened links (e.g. instagr.am)
+      final headResponse = await dio.head(
+        targetUrl,
         options: Options(headers: {
-          'User-Agent': 'telegrambot',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }),
       );
-      if (response.statusCode == 200 && response.data != null) {
-        final html = response.data!;
-        final document = html_parser.parse(html);
-        final videoMeta = document.querySelector('meta[property="og:video"]') ??
-            document.querySelector('meta[property="og:video:secure_url"]');
-        if (videoMeta?.attributes['content'] != null && videoMeta!.attributes['content']!.isNotEmpty) {
-          final videoUrl = videoMeta.attributes['content']!;
-          final titleMeta = document.querySelector('meta[property="og:title"]');
-          var title = titleMeta?.attributes['content'] ?? 'Instagram Video';
-          title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
-          if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
-
-          return MediaSourceInfo(
-            title: title,
-            streamUrl: videoUrl,
-            mediaType: audioOnly ? 'audio' : 'video',
-            fileExtension: audioOnly ? '.mp3' : '.mp4',
-          );
-        }
+      if (headResponse.realUri.toString().isNotEmpty) {
+        targetUrl = headResponse.realUri.toString();
       }
     } catch (_) {}
 
+    // Clean query parameters from resolved URL
+    final cleanUri = Uri.parse(targetUrl).removeFragment().replace(queryParameters: {});
+    final canonicalUrl = cleanUri.toString();
+
+    // Strategy 0: facebookexternalhit crawler (exactly mirroring Facebook resolution)
+    final targetUrls = [canonicalUrl];
+    if (canonicalUrl.contains('instagram.com') && !canonicalUrl.contains('m.instagram.com')) {
+      targetUrls.add(canonicalUrl.replaceFirst('instagram.com', 'm.instagram.com'));
+    }
+
+    for (final target in targetUrls) {
+      try {
+        final response = await dio.get<String>(
+          target,
+          options: Options(
+            followRedirects: true,
+            maxRedirects: 10,
+            headers: {
+              'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+              'Accept-Language': 'en-US,en;q=0.9',
+            },
+          ),
+        );
+        if (response.data != null && response.data!.isNotEmpty) {
+          final document = html_parser.parse(response.data!);
+          final videoMeta = document.querySelector('meta[property="og:video"]') ??
+              document.querySelector('meta[property="og:video:secure_url"]');
+          if (videoMeta?.attributes['content'] != null && videoMeta!.attributes['content']!.isNotEmpty) {
+            final videoUrl = videoMeta.attributes['content']!;
+            final titleMeta = document.querySelector('meta[property="og:title"]');
+            var title = titleMeta?.attributes['content'] ?? 'Instagram Video';
+            title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
+            if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
+
+            return MediaSourceInfo(
+              title: title,
+              streamUrl: videoUrl,
+              mediaType: audioOnly ? 'audio' : 'video',
+              fileExtension: audioOnly ? '.mp3' : '.mp4',
+            );
+          }
+        }
+      } catch (e, stack) {
+        print('Instagram crawler error for $target: $e');
+        print(stack);
+      }
+    }
+
+    // Strategy 1: Official Instagram Embed Scraper (Direct and independent)
+    try {
+      final embedUrl = canonicalUrl.endsWith('/') ? '${canonicalUrl}embed/' : '$canonicalUrl/embed/';
+      final response = await dio.get<String>(
+        embedUrl,
+        options: Options(headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+        }),
+      );
+      if (response.statusCode == 200 && response.data != null) {
+        final body = response.data!;
+        // Match any direct cdninstagram video URL
+        final mp4Regex = RegExp(r'https?:\\?/\\?/[^"\s\\]+?cdninstagram\.com[^"\s\\]+?\.mp4[^"\s\\]*');
+        final match = mp4Regex.firstMatch(body);
+        if (match != null && match.group(0) != null) {
+          final cleanVideoUrl = _cleanEscapedUrl(match.group(0)!);
+          if (cleanVideoUrl.isNotEmpty) {
+            final document = html_parser.parse(body);
+            final titleMeta = document.querySelector('title');
+            var title = titleMeta?.text ?? 'Instagram Video';
+            title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
+            if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
+
+            return MediaSourceInfo(
+              title: title,
+              streamUrl: cleanVideoUrl,
+              mediaType: audioOnly ? 'audio' : 'video',
+              fileExtension: audioOnly ? '.mp3' : '.mp4',
+            );
+          }
+        }
+      }
+    } catch (e, stack) {
+      print('Instagram embed scraper error: $e');
+      print(stack);
+    }
+
+    // Strategy 2: OpenGraph Mirrors (vxinstagram, instagramez, eeinstagram)
+    final proxyDomains = [
+      'vxinstagram.com',
+      'instagramez.com',
+      'eeinstagram.com',
+    ];
+
+    for (final proxy in proxyDomains) {
+      try {
+        var proxyUrl = canonicalUrl;
+        if (proxyUrl.contains('www.instagram.com')) {
+          proxyUrl = proxyUrl.replaceAll('www.instagram.com', proxy);
+        } else {
+          proxyUrl = proxyUrl.replaceAll('instagram.com', proxy);
+        }
+
+        final response = await dio.get<String>(
+          proxyUrl,
+          options: Options(headers: {
+            'User-Agent': 'Discordbot/2.0',
+          }),
+        );
+
+        if (response.statusCode == 200 && response.data != null) {
+          final html = response.data!;
+          final document = html_parser.parse(html);
+          final videoMeta = document.querySelector('meta[property="og:video"]') ??
+              document.querySelector('meta[property="og:video:secure_url"]');
+          if (videoMeta?.attributes['content'] != null && videoMeta!.attributes['content']!.isNotEmpty) {
+            final videoUrl = videoMeta.attributes['content']!;
+            final titleMeta = document.querySelector('meta[property="og:title"]');
+            var title = titleMeta?.attributes['content'] ?? 'Instagram Video';
+            title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
+            if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
+
+            return MediaSourceInfo(
+              title: title,
+              streamUrl: videoUrl,
+              mediaType: audioOnly ? 'audio' : 'video',
+              fileExtension: audioOnly ? '.mp3' : '.mp4',
+            );
+          }
+        }
+      } catch (e, stack) {
+        print('Instagram proxy error: $e');
+        print(stack);
+      }
+    }
+
+    // Strategy 3: SaveIG API
+    try {
+      final response = await dio.post(
+        'https://saveig.app/api/ajaxSearch',
+        data: 'q=${Uri.encodeComponent(canonicalUrl)}&vt=instagram',
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Origin': 'https://saveig.app',
+            'Referer': 'https://saveig.app/',
+          },
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        String htmlContent = '';
+        if (response.data is Map && (response.data as Map)['data'] != null) {
+          htmlContent = (response.data as Map)['data'].toString();
+        } else if (response.data is String) {
+          htmlContent = response.data as String;
+        }
+
+        if (htmlContent.isNotEmpty) {
+          final unpackedHtml = _unpackIfNeeded(htmlContent);
+          final result = _parseFbExtractorHtml(unpackedHtml, audioOnly: audioOnly);
+          if (result != null) {
+            return MediaSourceInfo(
+              title: result.title == 'Facebook Video' ? 'Instagram Video' : result.title,
+              streamUrl: result.streamUrl,
+              mediaType: result.mediaType,
+              fileExtension: result.fileExtension,
+              thumbnailUrl: result.thumbnailUrl,
+              availableQualities: result.availableQualities,
+            );
+          }
+        }
+      }
+    } catch (e, stack) {
+      print('Instagram SaveIG error: $e');
+      print(stack);
+    }
+
+    // Strategy 4: SnapSave API
+    try {
+      final snapResponse = await dio.post<String>(
+        'https://snapsave.app/action.php?lang=en',
+        data: 'url=${Uri.encodeComponent(canonicalUrl)}',
+        options: Options(
+          contentType: Headers.formUrlEncodedContentType,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Origin': 'https://snapsave.app',
+            'Referer': 'https://snapsave.app/',
+          },
+        ),
+      );
+
+      if (snapResponse.statusCode == 200 && snapResponse.data != null) {
+        final unpackedHtml = _unpackIfNeeded(snapResponse.data!);
+        final result = _parseFbExtractorHtml(unpackedHtml, audioOnly: audioOnly);
+        if (result != null) {
+          return MediaSourceInfo(
+            title: result.title == 'Facebook Video' ? 'Instagram Video' : result.title,
+            streamUrl: result.streamUrl,
+            mediaType: result.mediaType,
+            fileExtension: result.fileExtension,
+            thumbnailUrl: result.thumbnailUrl,
+            availableQualities: result.availableQualities,
+          );
+        }
+      }
+    } catch (e, stack) {
+      print('Instagram SnapSave error: $e');
+      print(stack);
+    }
+
     return GenericSocialMediaProvider().resolve(url, audioOnly: audioOnly);
   }
+
 }
 
 /// Provider for Facebook Videos, Reels, and Shorts using multi-strategy resolution (Redirect Unshortener, FDownloader API, GetMyFB API, SnapSave API, Embed Plugin, HTML Scrapers)
@@ -314,23 +514,31 @@ class FacebookSourceProvider implements MediaSourceProvider {
 
     String canonicalUrl = url.toString();
 
-    // 0. Resolve short share links (fb.watch, facebook.com/share/r/, etc.) to canonical URL
+    // 0. Try facebookexternalhit crawler request first (Bypasses login gates & parses og:video/secure_url directly)
     try {
-      final redirectResponse = await dio.get<String>(
+      final response = await dio.get<String>(
         canonicalUrl,
         options: Options(
           followRedirects: true,
           maxRedirects: 10,
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+            'Accept-Language': 'en-US,en;q=0.9',
           },
         ),
       );
-      final realUri = redirectResponse.realUri.toString();
+      final realUri = response.realUri.toString();
       if (realUri.isNotEmpty && realUri.contains('facebook.com')) {
         canonicalUrl = realUri;
       }
-    } catch (_) {}
+      if (response.data != null && response.data!.isNotEmpty) {
+        final result = _parseFbHtml(response.data!, audioOnly: audioOnly);
+        if (result != null) return result;
+      }
+    } catch (e, stack) {
+  print('Facebook resolver error: $e');
+  print(stack);
+}
 
     // Strategy 1: FDownloader / SaveFB API (ajaxSearch)
     try {
@@ -357,33 +565,16 @@ class FacebookSourceProvider implements MediaSourceProvider {
         }
 
         if (htmlContent.isNotEmpty) {
-          final result = _parseFbExtractorHtml(htmlContent, audioOnly: audioOnly);
+          final unpackedHtml = _unpackIfNeeded(htmlContent);
+          final result = _parseFbExtractorHtml(unpackedHtml, audioOnly: audioOnly);
           if (result != null) return result;
         }
       }
-    } catch (_) {}
+    }catch (e, stack) {
+  print('Facebook resolver error: $e');
+  print(stack);
+}
 
-    // Strategy 2: GetMyFB API (process)
-    try {
-      final apiResponse = await dio.post<String>(
-        'https://getmyfb.com/process',
-        data: 'id=${Uri.encodeComponent(canonicalUrl)}&locale=en',
-        options: Options(
-          contentType: Headers.formUrlEncodedContentType,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Origin': 'https://getmyfb.com',
-            'Referer': 'https://getmyfb.com/',
-          },
-        ),
-      );
-
-      if (apiResponse.statusCode == 200 && apiResponse.data != null) {
-        final result = _parseFbExtractorHtml(apiResponse.data!, audioOnly: audioOnly);
-        if (result != null) return result;
-      }
-    } catch (_) {}
 
     // Strategy 3: SnapSave API (action.php)
     try {
@@ -402,10 +593,14 @@ class FacebookSourceProvider implements MediaSourceProvider {
       );
 
       if (snapResponse.statusCode == 200 && snapResponse.data != null) {
-        final result = _parseFbExtractorHtml(snapResponse.data!, audioOnly: audioOnly);
+        final unpackedHtml = _unpackIfNeeded(snapResponse.data!);
+        final result = _parseFbExtractorHtml(unpackedHtml, audioOnly: audioOnly);
         if (result != null) return result;
       }
-    } catch (_) {}
+    } catch (e, stack) {
+  print('Facebook resolver error: $e');
+  print(stack);
+}
 
     // Strategy 4: Direct Embed Plugin Resolver (plugins/video.php)
     final embedUrl = 'https://www.facebook.com/plugins/video.php?href=${Uri.encodeComponent(canonicalUrl)}&show_text=0';
@@ -429,7 +624,11 @@ class FacebookSourceProvider implements MediaSourceProvider {
           final result = _parseFbHtml(response.data!, audioOnly: audioOnly);
           if (result != null) return result;
         }
-      } catch (_) {}
+      } catch (e, stack) {
+  print('Facebook resolver error: $e');
+  print(stack);
+}
+
     }
 
     // Strategy 5: Target URL HTML parsing (mbasic & www)
@@ -454,11 +653,82 @@ class FacebookSourceProvider implements MediaSourceProvider {
             final result = _parseFbHtml(response.data!, audioOnly: audioOnly);
             if (result != null) return result;
           }
-        } catch (_) {}
+        } catch (e, stack) {
+  print('Facebook resolver error: $e');
+  print(stack);
+}
+
       }
     }
 
     return GenericSocialMediaProvider().resolve(url, audioOnly: audioOnly);
+  }
+}
+
+  String _unpackIfNeeded(String content) {
+    if (!content.contains('eval(function(p,a,c,k,e,d)')) {
+      return content;
+    }
+    try {
+      final match = RegExp(
+        r'\}\s*\(\s*[\x27"](.*?)[\x27"]\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*[\x27"](.*?)[\x27"]\.split\('
+      ).firstMatch(content);
+      if (match != null) {
+        final p = _unescapePackedString(match.group(1)!);
+        final a = int.parse(match.group(2)!);
+        final c = int.parse(match.group(3)!);
+        final k = match.group(4)!.split('|');
+
+        final unpacked = _unpackDeanEdwards(p, a, c, k);
+        final htmlStart = unpacked.indexOf('<');
+        final htmlEnd = unpacked.lastIndexOf('>');
+        if (htmlStart != -1 && htmlEnd != -1 && htmlEnd > htmlStart) {
+          return unpacked.substring(htmlStart, htmlEnd + 1)
+              .replaceAll(r'\"', '"')
+              .replaceAll(r'\/', '/')
+              .replaceAll(r'\n', '\n')
+              .replaceAll(r'\r', '\r')
+              .replaceAll(r'\t', '\t');
+        }
+        return unpacked;
+      }
+    } catch (_) {}
+    return content;
+  }
+
+  String _unescapePackedString(String s) {
+    return s
+        .replaceAll(r"\'", "'")
+        .replaceAll(r'\"', '"')
+        .replaceAll(r'\\', r'\');
+  }
+
+  String _unpackDeanEdwards(String p, int a, int c, List<String> k) {
+    String encodeRadix(int val, int radix) {
+      const chars = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      if (val == 0) return '0';
+      var res = '';
+      var temp = val;
+      while (temp > 0) {
+        res = chars[temp % radix] + res;
+        temp = temp ~/ radix;
+      }
+      return res;
+    }
+
+    final Map<String, String> dict = {};
+    for (int i = 0; i < k.length; i++) {
+      final key = encodeRadix(i, a);
+      if (k[i].isNotEmpty) {
+        dict[key] = k[i];
+      }
+    }
+
+    final regex = RegExp(r'\b[0-9a-zA-Z]+\b');
+    return p.replaceAllMapped(regex, (match) {
+      final word = match.group(0)!;
+      return dict[word] ?? word;
+    });
   }
 
   MediaSourceInfo? _parseFbExtractorHtml(String html, {bool audioOnly = false}) {
@@ -479,18 +749,58 @@ class FacebookSourceProvider implements MediaSourceProvider {
     }
 
     // Check all <a> tags with video/download links
-    final allLinks = doc.querySelectorAll('a[href*="fbcdn"], a[href*=".mp4"], a[href*="download"]');
+    final allLinks = doc.querySelectorAll('a');
     for (final link in allLinks) {
       final href = link.attributes['href'];
       if (href != null && href.startsWith('http')) {
-        final isHd = link.text.toUpperCase().contains('HD') || href.contains('quality_hd');
+        // Exclude App Store and Google Play Store ads, and Facebook help/plugin links
+        if (href.contains('play.google.com') ||
+            href.contains('apple.com') ||
+            href.contains('market://') ||
+            href.contains('facebook.com/plugins') ||
+            href.contains('help/')) {
+          continue;
+        }
+
+        // Keep links that are direct media or proxied stream/download links
+        final text = link.text.trim().toLowerCase();
+        final isVideoLink = href.contains('fbcdn.net') ||
+            href.contains('cdninstagram.com') ||
+            href.contains('instagram.com') ||
+            href.contains('saveig.app') ||
+            href.contains('snapinsta') ||
+            href.contains('ssscdn.io') ||
+            href.contains('.mp4') ||
+            href.contains('snapsave') ||
+            href.contains('fdownloader') ||
+            text.contains('download') ||
+            text.contains('hd') ||
+            text.contains('sd') ||
+            text.contains('normal') ||
+            text.contains('high');
+
+        if (!isVideoLink) continue;
+
+        final isHd = text.contains('hd') ||
+            text.contains('high') ||
+            href.contains('quality_hd');
         final label = isHd ? '1080p / HD Quality' : '720p / SD Quality';
+
         if (!qualities.any((q) => q.streamUrl == href)) {
           qualities.add(MediaQualityOption(label: label, streamUrl: href));
         }
-        primaryStreamUrl ??= href;
       }
     }
+
+    if (qualities.isNotEmpty) {
+      // Find HD quality if available, otherwise use the first one
+      final hdOption = qualities.firstWhere(
+        (q) => q.label.contains('HD') || q.label.contains('1080p'),
+        orElse: () => qualities.first,
+      );
+      primaryStreamUrl = hdOption.streamUrl;
+    }
+
 
     if (primaryStreamUrl == null) {
       final regexMatch = RegExp(r'https?:\\?/\\?/[^"\s\\]*?fbcdn\.net[^"\s\\]*?\.mp4[^"\s\\]*').firstMatch(html);
@@ -529,6 +839,26 @@ class FacebookSourceProvider implements MediaSourceProvider {
     final thumbMeta = doc.querySelector('meta[property="og:image"]');
     if (thumbMeta?.attributes['content'] != null) {
       thumbnailUrl = thumbMeta!.attributes['content'];
+    }
+
+    // Try parsing og:video or og:video:secure_url directly from crawler page
+    final ogVideoMeta = doc.querySelector('meta[property="og:video"]') ??
+        doc.querySelector('meta[property="og:video:secure_url"]');
+    if (ogVideoMeta?.attributes['content'] != null && ogVideoMeta!.attributes['content']!.isNotEmpty) {
+      final streamUrl = _cleanEscapedUrl(ogVideoMeta.attributes['content']!);
+      if (streamUrl.startsWith('http')) {
+        return MediaSourceInfo(
+          title: (title != null && title.isNotEmpty) ? title : 'Facebook Video',
+          streamUrl: streamUrl,
+          mediaType: audioOnly ? 'audio' : 'video',
+          fileExtension: audioOnly ? '.mp3' : '.mp4',
+          thumbnailUrl: thumbnailUrl,
+          availableQualities: [
+            MediaQualityOption(label: audioOnly ? '320 kbps (HQ)' : '1080p (HD)', streamUrl: streamUrl),
+            MediaQualityOption(label: audioOnly ? '192 kbps (Standard)' : '720p (SD)', streamUrl: streamUrl),
+          ],
+        );
+      }
     }
 
     final qualities = <MediaQualityOption>[];
@@ -595,7 +925,7 @@ class FacebookSourceProvider implements MediaSourceProvider {
         .replaceAll(r'\u00252F', '/')
         .replaceAll(r'\u0025', '%');
   }
-}
+
 
 /// Generic OpenGraph / Meta Tag provider for public web and social media links (Instagram, X, TikTok, Facebook, etc.)
 class GenericSocialMediaProvider implements MediaSourceProvider {
