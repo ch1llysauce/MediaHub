@@ -180,7 +180,7 @@ class DownloadManager {
         referer = 'https://www.google.com/';
       }
 
-      await _dio.download(
+      final downloadResponse = await _dio.download(
         mediaInfo.streamUrl,
         targetPath,
         cancelToken: cancelToken,
@@ -198,8 +198,14 @@ class DownloadManager {
         },
       );
 
-
       if (cancelToken.isCancelled) return;
+
+      if (provider is InstagramSourceProvider) {
+        await _validateInstagramVideoDownload(
+          targetPath,
+          contentType: downloadResponse.headers.value(Headers.contentTypeHeader),
+        );
+      }
 
       // Mark task as completed
       await _downloadRepository.updateStatus(taskId, DownloadStatus.completed);
@@ -211,10 +217,13 @@ class DownloadManager {
       if (CancelToken.isCancel(e)) {
         await _downloadRepository.updateStatus(taskId, DownloadStatus.cancelled);
       } else {
+        final isInstagram = provider is InstagramSourceProvider;
         await _downloadRepository.updateStatus(
           taskId,
           DownloadStatus.failed,
-          errorMessage: 'Unable to connect to source. Please check your internet connection or URL.',
+          errorMessage: isInstagram
+              ? 'Instagram did not provide a downloadable public video. Check that the Reel or post is public, then try again.'
+              : 'Unable to connect to source. Please check your internet connection or URL.',
         );
       }
     } catch (e) {
@@ -229,6 +238,55 @@ class DownloadManager {
       );
     } finally {
       _cancelTokens.remove(taskId);
+    }
+  }
+
+  /// Rejects HTML/challenge pages and incomplete data that may be saved with an
+  /// MP4 filename when a social-media CDN denies a stream request.
+  Future<void> _validateInstagramVideoDownload(
+    String targetPath, {
+    required String? contentType,
+  }) async {
+    final file = File(targetPath);
+    final fileSize = await file.length();
+    final normalizedContentType = contentType?.toLowerCase();
+
+    InstagramResolutionDebugLog.add(
+      'Download completed: content type ${normalizedContentType ?? 'unknown'}; '
+      'file size $fileSize bytes.',
+    );
+
+    final isNonVideoResponse = normalizedContentType != null &&
+        normalizedContentType.isNotEmpty &&
+        !normalizedContentType.startsWith('video/') &&
+        !normalizedContentType.startsWith('application/octet-stream');
+    if (isNonVideoResponse || fileSize < 1024) {
+      await _removeInvalidDownload(file);
+      throw Exception('Instagram returned an invalid video response. Please retry the download.');
+    }
+
+    final handle = await file.open();
+    try {
+      final header = await handle.read(12);
+      final hasMp4Header = header.length >= 8 &&
+          header[4] == 0x66 && // f
+          header[5] == 0x74 && // t
+          header[6] == 0x79 && // y
+          header[7] == 0x70; // p
+      if (!hasMp4Header) {
+        await _removeInvalidDownload(file);
+        throw Exception('Instagram returned a file that is not a playable MP4 video.');
+      }
+    } finally {
+      await handle.close();
+    }
+
+    InstagramResolutionDebugLog.add('MP4 file validation passed.');
+  }
+
+  Future<void> _removeInvalidDownload(File file) async {
+    if (await file.exists()) {
+      await file.delete();
     }
   }
 

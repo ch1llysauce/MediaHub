@@ -106,6 +106,11 @@ void main() {
       expect(instagramProvider.canHandle(Uri.parse('https://example.com/video')), isFalse);
     });
 
+    test('InstagramSourceProvider handles mobile and share URLs', () {
+      expect(instagramProvider.canHandle(Uri.parse('https://m.instagram.com/reel/C12345/')), isTrue);
+      expect(instagramProvider.canHandle(Uri.parse('https://www.instagram.com/share/reel/C12345/')), isTrue);
+    });
+
     test('FacebookSourceProvider handles Facebook URLs', () {
       expect(facebookProvider.canHandle(Uri.parse('https://www.facebook.com/watch/?v=12345')), isTrue);
       expect(facebookProvider.canHandle(Uri.parse('https://fb.watch/12345/')), isTrue);

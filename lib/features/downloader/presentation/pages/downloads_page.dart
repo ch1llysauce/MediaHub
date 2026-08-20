@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../../core/providers/providers.dart';
+import '../../../../core/services/downloader/media_source_provider.dart';
 import '../../../../domain/entities/download_task_entity.dart';
 import '../../../player/presentation/controllers/music_player_controller.dart';
 import '../controllers/downloads_controller.dart';
@@ -504,6 +505,43 @@ class _DownloadDetailsModal extends ConsumerWidget {
     return task.url;
   }
 
+  bool get _isInstagramTask {
+    final host = Uri.tryParse(task.url)?.host.toLowerCase() ?? '';
+    return host.contains('instagram.com') || host.contains('instagr.am');
+  }
+
+  void _showInstagramDebugLog(BuildContext context) {
+    final trace = InstagramResolutionDebugLog.formatted;
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Instagram Debug Log'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: SelectableText(trace),
+          ),
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: trace));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Instagram debug log copied.')),
+              );
+            },
+            icon: const Icon(Icons.copy_rounded),
+            label: const Text('Copy'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -676,6 +714,15 @@ class _DownloadDetailsModal extends ConsumerWidget {
                 ),
               ],
 
+              if (task.isFailed && _isInstagramTask) ...[
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () => _showInstagramDebugLog(context),
+                  icon: const Icon(Icons.bug_report_outlined),
+                  label: const Text('View Instagram Debug Log'),
+                ),
+              ],
+
               const SizedBox(height: 24),
 
               // Action Buttons
@@ -779,4 +826,3 @@ class _DownloadDetailsModal extends ConsumerWidget {
     );
   }
 }
-

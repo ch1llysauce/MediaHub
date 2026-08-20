@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'package:dio/dio.dart';
 import 'package:html/parser.dart' as html_parser;
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
@@ -255,6 +256,9 @@ class InstagramSourceProvider implements MediaSourceProvider {
 
   @override
   Future<MediaSourceInfo> resolve(Uri url, {bool audioOnly = false}) async {
+    InstagramResolutionDebugLog.start();
+    _logInstagramResolution('Started public media resolution.');
+
     final dio = Dio(BaseOptions(
       connectTimeout: const Duration(seconds: 12),
       receiveTimeout: const Duration(seconds: 12),
@@ -263,7 +267,7 @@ class InstagramSourceProvider implements MediaSourceProvider {
     ));
 
     var targetUrl = url.toString();
-    try {
+    /* try {
       // Follow redirects first to resolve any shortened links (e.g. instagr.am)
       final headResponse = await dio.head(
         targetUrl,
@@ -275,16 +279,17 @@ class InstagramSourceProvider implements MediaSourceProvider {
         targetUrl = headResponse.realUri.toString();
       }
     } catch (_) {}
+    */
 
     // Clean query parameters from resolved URL
     final cleanUri = Uri.parse(targetUrl).removeFragment().replace(queryParameters: {});
     final canonicalUrl = cleanUri.toString();
-
     // Strategy 0: facebookexternalhit crawler (exactly mirroring Facebook resolution)
     final targetUrls = [canonicalUrl];
     if (canonicalUrl.contains('instagram.com') && !canonicalUrl.contains('m.instagram.com')) {
       targetUrls.add(canonicalUrl.replaceFirst('instagram.com', 'm.instagram.com'));
     }
+    _logInstagramResolution('Trying crawler metadata on ${targetUrls.length} public page variant(s).');
 
     for (final target in targetUrls) {
       try {
@@ -294,21 +299,31 @@ class InstagramSourceProvider implements MediaSourceProvider {
             followRedirects: true,
             maxRedirects: 10,
             headers: {
-              'User-Agent': 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+    'AppleWebKit/537.36 (KHTML, like Gecko) '
+    'Chrome/120.0.0.0 Safari/537.36',
               'Accept-Language': 'en-US,en;q=0.9',
             },
           ),
         );
+        _logInstagramResolution(
+          'Crawler response received: HTTP ${response.statusCode}; '
+          'body length ${response.data?.length ?? 0}.',
+        );
         if (response.data != null && response.data!.isNotEmpty) {
           final document = html_parser.parse(response.data!);
           final videoMeta = document.querySelector('meta[property="og:video"]') ??
-              document.querySelector('meta[property="og:video:secure_url"]');
+              document.querySelector('meta[property="og:video:secure_url"]')??
+              document.querySelector('meta[property="og:video:url"]') ??
+              document.querySelector('meta[name="twitter:player:stream"]');
           if (videoMeta?.attributes['content'] != null && videoMeta!.attributes['content']!.isNotEmpty) {
             final videoUrl = videoMeta.attributes['content']!;
             final titleMeta = document.querySelector('meta[property="og:title"]');
             var title = titleMeta?.attributes['content'] ?? 'Instagram Video';
             title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
             if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
+
+            _logInstagramResolution('Resolved stream from crawler metadata.');
 
             return MediaSourceInfo(
               title: title,
@@ -318,13 +333,13 @@ class InstagramSourceProvider implements MediaSourceProvider {
             );
           }
         }
-      } catch (e, stack) {
-        print('Instagram crawler error for $target: $e');
-        print(stack);
+      } catch (e) {
+        _logInstagramResolution('Crawler request failed: ${e.runtimeType}.');
       }
     }
 
     // Strategy 1: Official Instagram Embed Scraper (Direct and independent)
+    _logInstagramResolution('Trying Instagram embed metadata.');
     try {
       final embedUrl = canonicalUrl.endsWith('/') ? '${canonicalUrl}embed/' : '$canonicalUrl/embed/';
       final response = await dio.get<String>(
@@ -334,6 +349,7 @@ class InstagramSourceProvider implements MediaSourceProvider {
           'Accept-Language': 'en-US,en;q=0.9',
         }),
       );
+      _logInstagramResolution('Embed response received: HTTP ${response.statusCode}.');
       if (response.statusCode == 200 && response.data != null) {
         final body = response.data!;
         // Match any direct cdninstagram video URL
@@ -348,6 +364,8 @@ class InstagramSourceProvider implements MediaSourceProvider {
             title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
             if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
 
+            _logInstagramResolution('Resolved stream from embed metadata.');
+
             return MediaSourceInfo(
               title: title,
               streamUrl: cleanVideoUrl,
@@ -357,9 +375,33 @@ class InstagramSourceProvider implements MediaSourceProvider {
           }
         }
       }
-    } catch (e, stack) {
-      print('Instagram embed scraper error: $e');
-      print(stack);
+    } catch (e) {
+      _logInstagramResolution('Embed request failed: ${e.runtimeType}.');
+    }
+
+    // Recent public Instagram pages commonly expose the media URL in embedded
+    // JSON instead of an OpenGraph video tag. Try it before relying on an
+    // external mirror, which can be unavailable or blocked independently.
+    _logInstagramResolution('Trying embedded public page data.');
+    for (final target in targetUrls) {
+      try {
+        final response = await dio.get<String>(
+          target,
+          options: Options(headers: {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+          }),
+        );
+        final result = _parseInstagramPublicPage(
+          response.data,
+        );
+        if (result != null) {
+          _logInstagramResolution('Resolved stream from embedded public page data.');
+          return result;
+        }
+      } catch (e) {
+        _logInstagramResolution('Public page parser failed: ${e.runtimeType}.');
+      }
     }
 
     // Strategy 2: OpenGraph Mirrors (vxinstagram, instagramez, eeinstagram)
@@ -370,6 +412,7 @@ class InstagramSourceProvider implements MediaSourceProvider {
     ];
 
     for (final proxy in proxyDomains) {
+      _logInstagramResolution('Trying public metadata mirror: $proxy.');
       try {
         var proxyUrl = canonicalUrl;
         if (proxyUrl.contains('www.instagram.com')) {
@@ -389,13 +432,17 @@ class InstagramSourceProvider implements MediaSourceProvider {
           final html = response.data!;
           final document = html_parser.parse(html);
           final videoMeta = document.querySelector('meta[property="og:video"]') ??
-              document.querySelector('meta[property="og:video:secure_url"]');
+              document.querySelector('meta[property="og:video:secure_url"]')??
+              document.querySelector('meta[property="og:video:url"]') ??
+              document.querySelector('meta[name="twitter:player:stream"]');
           if (videoMeta?.attributes['content'] != null && videoMeta!.attributes['content']!.isNotEmpty) {
             final videoUrl = videoMeta.attributes['content']!;
             final titleMeta = document.querySelector('meta[property="og:title"]');
             var title = titleMeta?.attributes['content'] ?? 'Instagram Video';
             title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
             if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
+
+            _logInstagramResolution('Resolved stream from public metadata mirror: $proxy.');
 
             return MediaSourceInfo(
               title: title,
@@ -405,13 +452,13 @@ class InstagramSourceProvider implements MediaSourceProvider {
             );
           }
         }
-      } catch (e, stack) {
-        print('Instagram proxy error: $e');
-        print(stack);
+      } catch (e) {
+        _logInstagramResolution('Metadata mirror $proxy failed: ${e.runtimeType}.');
       }
     }
 
     // Strategy 3: SaveIG API
+    _logInstagramResolution('Trying SaveIG resolver.');
     try {
       final response = await dio.post(
         'https://saveig.app/api/ajaxSearch',
@@ -439,6 +486,7 @@ class InstagramSourceProvider implements MediaSourceProvider {
           final unpackedHtml = _unpackIfNeeded(htmlContent);
           final result = _parseFbExtractorHtml(unpackedHtml, audioOnly: audioOnly);
           if (result != null) {
+            _logInstagramResolution('Resolved stream from SaveIG resolver.');
             return MediaSourceInfo(
               title: result.title == 'Facebook Video' ? 'Instagram Video' : result.title,
               streamUrl: result.streamUrl,
@@ -450,12 +498,12 @@ class InstagramSourceProvider implements MediaSourceProvider {
           }
         }
       }
-    } catch (e, stack) {
-      print('Instagram SaveIG error: $e');
-      print(stack);
+    } catch (e) {
+      _logInstagramResolution('SaveIG resolver failed: ${e.runtimeType}.');
     }
 
     // Strategy 4: SnapSave API
+    _logInstagramResolution('Trying SnapSave resolver.');
     try {
       final snapResponse = await dio.post<String>(
         'https://snapsave.app/action.php?lang=en',
@@ -475,6 +523,7 @@ class InstagramSourceProvider implements MediaSourceProvider {
         final unpackedHtml = _unpackIfNeeded(snapResponse.data!);
         final result = _parseFbExtractorHtml(unpackedHtml, audioOnly: audioOnly);
         if (result != null) {
+          _logInstagramResolution('Resolved stream from SnapSave resolver.');
           return MediaSourceInfo(
             title: result.title == 'Facebook Video' ? 'Instagram Video' : result.title,
             streamUrl: result.streamUrl,
@@ -485,14 +534,117 @@ class InstagramSourceProvider implements MediaSourceProvider {
           );
         }
       }
-    } catch (e, stack) {
-      print('Instagram SnapSave error: $e');
-      print(stack);
+    } catch (e) {
+      _logInstagramResolution('SnapSave resolver failed: ${e.runtimeType}.');
     }
 
+    _logInstagramResolution('No public stream was resolved; using the generic fallback.');
     return GenericSocialMediaProvider().resolve(url, audioOnly: audioOnly);
   }
 
+}
+
+const _instagramLogName = 'MediaHub.InstagramProvider';
+
+/// Keeps the latest Instagram resolver trace available to the download UI.
+/// Entries omit source URLs and temporary CDN tokens.
+class InstagramResolutionDebugLog {
+  static const _maximumEntries = 60;
+  static final List<String> _entries = [];
+
+  static void start() {
+    _entries
+      ..clear()
+      ..add('[${DateTime.now().toLocal()}] Started Instagram resolution');
+  }
+
+  static void add(String message) {
+    _entries.add('[${DateTime.now().toLocal()}] $message');
+    if (_entries.length > _maximumEntries) {
+      _entries.removeRange(0, _entries.length - _maximumEntries);
+    }
+  }
+
+  static String get formatted =>
+      _entries.isEmpty ? 'No Instagram resolver trace is available yet.' : _entries.join('\n');
+}
+
+void _logInstagramResolution(String message) {
+  InstagramResolutionDebugLog.add(message);
+  developer.log(message, name: _instagramLogName);
+}
+
+/// Resolves media made available directly in a public Instagram page. It does
+/// not use authenticated sessions or attempt to access private posts.
+MediaSourceInfo? _parseInstagramPublicPage(
+  String? html,
+) {
+  if (html == null || html.isEmpty) return null;
+
+  final streamPatterns = [
+  // Instagram video URL
+  RegExp(r'"video_url"\s*:\s*"([^"]+)"'),
+
+  // Facebook-style fields sometimes exposed by Instagram
+  RegExp(r'"playable_url_quality_hd"\s*:\s*"([^"]+)"'),
+  RegExp(r'"playable_url"\s*:\s*"([^"]+)"'),
+
+  // Generic video CDN URL — ONLY accept URLs containing .mp4
+  RegExp(
+    r'"(?:src|url)"\s*:\s*"(https?:[^"]*cdninstagram\.com[^"]*\.mp4[^"]*)"',
+  ),
+];
+
+  String? streamUrl;
+  for (final pattern in streamPatterns) {
+    final candidate = pattern.firstMatch(html)?.group(1);
+    if (candidate == null) continue;
+
+    final cleaned = _cleanInstagramUrl(candidate);
+    final uri = Uri.tryParse(cleaned);
+
+if (uri != null &&
+    uri.scheme == 'https' &&
+    uri.host.contains('cdninstagram.com') &&
+    uri.path.toLowerCase().contains('.mp4')) {
+  streamUrl = cleaned;
+  break;
+}
+  }
+  if (streamUrl == null) return null;
+
+  final document = html_parser.parse(html);
+  final rawTitle = document.querySelector('meta[property="og:title"]')?.attributes['content'] ??
+      document.querySelector('title')?.text ??
+      'Instagram Video';
+  var title = rawTitle.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
+  if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
+
+  return MediaSourceInfo(
+    title: title,
+    streamUrl: streamUrl,
+    // The manager does not transcode. Saving an MP4 stream as .mp3 creates a
+    // broken audio download, so preserve the source container.
+    mediaType: 'video',
+    fileExtension: '.mp4',
+    thumbnailUrl: document.querySelector('meta[property="og:image"]')?.attributes['content'],
+  );
+}
+
+String _cleanInstagramUrl(String raw) {
+  var url = raw
+      .replaceAll(r'\/', '/')
+      .replaceAll(r'\\/', '/')
+      .replaceAll(r'\u0026', '&')
+      .replaceAll(r'\u00253A', ':')
+      .replaceAll(r'\u00252F', '/')
+      .replaceAll(r'\u0025', '%');
+
+  try {
+    url = Uri.decodeComponent(url);
+  } catch (_) {}
+
+  return url;
 }
 
 /// Provider for Facebook Videos, Reels, and Shorts using multi-strategy resolution (Redirect Unshortener, FDownloader API, GetMyFB API, SnapSave API, Embed Plugin, HTML Scrapers)
