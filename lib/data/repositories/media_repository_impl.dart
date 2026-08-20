@@ -1,3 +1,10 @@
+import 'dart:async';
+import 'dart:io';
+import 'package:path/path.dart' as p;
+
+import 'package:just_audio/just_audio.dart';
+import 'package:media_kit/media_kit.dart';
+
 import '../../core/services/media_scanner_service.dart';
 import '../../domain/entities/media_item_entity.dart';
 import '../../domain/entities/scan_directory_entity.dart';
@@ -92,9 +99,70 @@ class MediaRepositoryImpl implements MediaRepository {
     // Batch upsert discovered media items into SQLite
     await _mediaDao.upsertMediaBatch(companions);
 
-    // Reconcile and mark missing files as unavailable
-    final scannedPaths = scannedFiles.map((f) => f.path).toList();
-    await _mediaDao.markMissingFiles(scannedPaths);
+    // Reconcile and mark missing files as unavailable based on physical storage check
+    await _mediaDao.reconcileMissingFiles();
+
+    // Run background duration extraction asynchronously without delaying UI scan completion
+    unawaited(_populateAllMissingDurations());
+  }
+
+  @override
+  Future<void> scanSingleFile(String filePath) async {
+    final file = File(filePath);
+    if (!await file.exists()) return;
+
+    try {
+      final stat = await file.stat();
+      final mediaType = _scannerService.getMediaType(filePath);
+      final fallbackTitle = p.basenameWithoutExtension(filePath);
+
+      final scannedFile = ScannedMediaFile(
+        path: filePath,
+        title: fallbackTitle,
+        mediaType: mediaType,
+        fileSize: stat.size,
+      );
+
+      final companion = _scannerService.toCompanion(scannedFile);
+      await _mediaDao.upsertMedia(companion);
+    } catch (_) {}
+  }
+
+  Future<void> _populateAllMissingDurations() async {
+    try {
+      final allMedia = await _mediaDao.getAllMedia();
+      final missingAudio = allMedia.where((m) => m.mediaType == 'audio' && (m.duration == null || m.duration == 0)).toList();
+      final missingVideo = allMedia.where((m) => m.mediaType == 'video' && (m.duration == null || m.duration == 0)).toList();
+
+      if (missingAudio.isNotEmpty) {
+        final audioPlayer = AudioPlayer();
+        for (final media in missingAudio) {
+          try {
+            final dur = await audioPlayer.setFilePath(media.path).timeout(const Duration(seconds: 1));
+            if (dur != null && dur.inSeconds > 0) {
+              await _mediaDao.updateMediaDuration(media.id, dur.inSeconds);
+            }
+          } catch (_) {}
+        }
+        await audioPlayer.dispose();
+      }
+
+      if (missingVideo.isNotEmpty) {
+        final videoPlayer = Player();
+        for (final media in missingVideo) {
+          try {
+            await videoPlayer.open(Media(media.path), play: false);
+            final dur = await videoPlayer.stream.duration
+                .firstWhere((d) => d.inSeconds > 0)
+                .timeout(const Duration(milliseconds: 800));
+            if (dur.inSeconds > 0) {
+              await _mediaDao.updateMediaDuration(media.id, dur.inSeconds);
+            }
+          } catch (_) {}
+        }
+        await videoPlayer.dispose();
+      }
+    } catch (_) {}
   }
 
   @override

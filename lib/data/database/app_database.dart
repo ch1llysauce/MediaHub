@@ -5,7 +5,9 @@ import 'package:drift/native.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'daos/downloads_dao.dart';
 import 'daos/favorites_dao.dart';
+import 'daos/history_dao.dart';
 import 'daos/media_dao.dart';
 import 'daos/playlists_dao.dart';
 import 'daos/scan_directories_dao.dart';
@@ -13,6 +15,7 @@ import 'tables.dart';
 
 part 'app_database.g.dart';
 
+@DriftAccessor()
 @DriftDatabase(
   tables: [
     MediaItems,
@@ -28,6 +31,8 @@ part 'app_database.g.dart';
     ScanDirectoriesDao,
     PlaylistsDao,
     FavoritesDao,
+    HistoryDao,
+    DownloadsDao,
   ],
 )
 class AppDatabase extends _$AppDatabase {

@@ -14,11 +14,13 @@ class MiniPlayerWidget extends ConsumerWidget {
     ref.listen<MusicPlayerState>(musicPlayerControllerProvider, (previous, next) {
       if (next.activeItem != null &&
           next.activeItem?.mediaType == 'video' &&
-          previous?.activeItem?.mediaType != 'video') {
+          previous?.activeItem?.id != next.activeItem?.id) {
         final videoItem = next.activeItem!;
         final queue = next.queue;
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (context.mounted) {
+          // Only push if no VideoPlayerPage is currently active;
+          // the existing page handles track changes internally.
+          if (context.mounted && !VideoPlayerPage.isActive) {
             Navigator.of(context, rootNavigator: true).push(
               MaterialPageRoute(
                 builder: (context) => VideoPlayerPage(
@@ -64,14 +66,17 @@ class MiniPlayerWidget extends ConsumerWidget {
         GestureDetector(
           onTap: () {
             if (activeItem.mediaType == 'video') {
-              Navigator.of(context, rootNavigator: true).push(
-                MaterialPageRoute(
-                  builder: (context) => VideoPlayerPage(
-                    item: activeItem,
-                    playlist: playerState.queue,
+              // Only push if no VideoPlayerPage is currently active
+              if (!VideoPlayerPage.isActive) {
+                Navigator.of(context, rootNavigator: true).push(
+                  MaterialPageRoute(
+                    builder: (context) => VideoPlayerPage(
+                      item: activeItem,
+                      playlist: playerState.queue,
+                    ),
                   ),
-                ),
-              );
+                );
+              }
             } else {
               showModalBottomSheet(
                 context: context,
@@ -113,12 +118,16 @@ class MiniPlayerWidget extends ConsumerWidget {
                                   activeItem.artworkPath!,
                                   fit: BoxFit.cover,
                                   errorBuilder: (_, __, ___) => Icon(
-                                    Icons.music_note_rounded,
+                                    activeItem.mediaType == 'video'
+                                        ? Icons.movie_rounded
+                                        : Icons.music_note_rounded,
                                     color: colorScheme.onPrimaryContainer,
                                   ),
                                 )
                               : Icon(
-                                  Icons.music_note_rounded,
+                                  activeItem.mediaType == 'video'
+                                      ? Icons.movie_rounded
+                                      : Icons.music_note_rounded,
                                   color: colorScheme.onPrimaryContainer,
                                 ),
                         ),
@@ -138,7 +147,7 @@ class MiniPlayerWidget extends ConsumerWidget {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              activeItem.artist ?? 'Unknown Artist',
+                              activeItem.artist ?? (activeItem.mediaType == 'video' ? 'Video File' : 'Unknown Artist'),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.bodySmall?.copyWith(
@@ -159,13 +168,31 @@ class MiniPlayerWidget extends ConsumerWidget {
                       ),
                       IconButton(
                         icon: Icon(
-                          playerState.isPlaying
-                              ? Icons.pause_circle_filled_rounded
-                              : Icons.play_circle_fill_rounded,
+                          activeItem.mediaType == 'video'
+                              ? Icons.play_circle_fill_rounded
+                              : (playerState.isPlaying
+                                  ? Icons.pause_circle_filled_rounded
+                                  : Icons.play_circle_fill_rounded),
                           size: 32,
                           color: colorScheme.primary,
                         ),
-                        onPressed: () => controller.togglePlayPause(),
+                        onPressed: () {
+                          if (activeItem.mediaType == 'video') {
+                            // Only push if no VideoPlayerPage is currently active
+                            if (!VideoPlayerPage.isActive) {
+                              Navigator.of(context, rootNavigator: true).push(
+                                MaterialPageRoute(
+                                  builder: (context) => VideoPlayerPage(
+                                    item: activeItem,
+                                    playlist: playerState.queue,
+                                  ),
+                                ),
+                              );
+                            }
+                          } else {
+                            controller.togglePlayPause();
+                          }
+                        },
                       ),
                       IconButton(
                         icon: const Icon(Icons.skip_next_rounded),

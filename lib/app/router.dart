@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../domain/entities/media_item_entity.dart';
-import '../features/downloads/presentation/pages/downloads_page.dart';
+import '../features/downloader/presentation/pages/downloads_page.dart';
+import '../features/history/presentation/pages/history_page.dart';
 import '../features/favorites/presentation/pages/favorites_page.dart';
 import '../features/home/presentation/pages/home_page.dart';
 import '../features/library/presentation/pages/library_page.dart';
 import '../features/player/presentation/pages/video_player_page.dart';
 import '../features/playlists/presentation/pages/playlist_detail_page.dart';
 import '../features/playlists/presentation/pages/playlists_page.dart';
+import '../features/search/presentation/pages/search_page.dart';
 import '../features/settings/presentation/pages/settings_page.dart';
 import '../features/shell/presentation/pages/main_shell_page.dart';
 
@@ -30,6 +32,13 @@ final appRouter = GoRouter(
               path: '/',
               name: 'home',
               builder: (context, state) => const HomePage(),
+              routes: [
+                GoRoute(
+                  path: 'search',
+                  name: 'search',
+                  builder: (context, state) => const SearchPage(),
+                ),
+              ],
             ),
           ],
         ),
@@ -62,6 +71,11 @@ final appRouter = GoRouter(
                   path: 'favorites',
                   name: 'favorites',
                   builder: (context, state) => const FavoritesPage(),
+                ),
+                GoRoute(
+                  path: 'history',
+                  name: 'history',
+                  builder: (context, state) => const HistoryPage(),
                 ),
                 GoRoute(
                   path: ':id',

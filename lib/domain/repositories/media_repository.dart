@@ -9,6 +9,7 @@ abstract class MediaRepository {
   Future<MediaItemEntity?> getMediaById(String id);
   Future<MediaItemEntity?> getMediaByPath(String path);
   Future<void> scanDirectories(List<String> directoryPaths);
+  Future<void> scanSingleFile(String filePath);
   Future<List<ScanDirectoryEntity>> getScanDirectories();
   Future<void> addScanDirectory(String path);
   Future<void> removeScanDirectory(String id);

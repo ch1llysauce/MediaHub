@@ -149,6 +149,27 @@ class PlaylistsPage extends ConsumerWidget {
             trailing: const Icon(Icons.chevron_right_rounded),
             onTap: () => context.pushNamed('favorites'),
           ),
+          ListTile(
+            leading: Container(
+              padding: const EdgeInsets.all(8.0),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12.0),
+              ),
+              child: Icon(
+                Icons.history_rounded,
+                color: Theme.of(context).colorScheme.primary,
+                size: 28,
+              ),
+            ),
+            title: const Text(
+              'Playback History',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            ),
+            subtitle: const Text('Recently played songs & videos'),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () => context.pushNamed('history'),
+          ),
           const Divider(height: 1),
           Expanded(
             child: playlistsAsync.when(

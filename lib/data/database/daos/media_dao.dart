@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:drift/drift.dart';
 import '../app_database.dart';
 import '../tables.dart';
@@ -52,6 +53,18 @@ class MediaDao extends DatabaseAccessor<AppDatabase> with _$MediaDaoMixin {
     await batch((batch) {
       batch.insertAllOnConflictUpdate(mediaItems, entities);
     });
+  }
+
+  /// Safely reconcile physical existence of files on storage, marking missing files as unavailable
+  Future<void> reconcileMissingFiles() async {
+    final allMedia = await (select(mediaItems)).get();
+    for (final item in allMedia) {
+      final exists = File(item.path).existsSync();
+      if (item.isAvailable != exists) {
+        await (update(mediaItems)..where((tbl) => tbl.id.equals(item.id)))
+            .write(MediaItemsCompanion(isAvailable: Value(exists)));
+      }
+    }
   }
 
   /// Mark media files not in the scanned list as unavailable (file missing on disk)

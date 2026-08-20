@@ -6,12 +6,14 @@ import '../../../favorites/presentation/controllers/favorites_controller.dart';
 
 class MediaItemTile extends ConsumerWidget {
   final MediaItemEntity item;
+  final String? customSubtitle;
   final VoidCallback? onTap;
   final VoidCallback? onMoreTap;
 
   const MediaItemTile({
     super.key,
     required this.item,
+    this.customSubtitle,
     this.onTap,
     this.onMoreTap,
   });
@@ -82,7 +84,7 @@ class MediaItemTile extends ConsumerWidget {
         children: [
           Expanded(
             child: Text(
-              item.artist ?? (isAudio ? 'Unknown Artist' : 'Local Video'),
+              customSubtitle ?? item.artist ?? (isAudio ? 'Unknown Artist' : 'Local Video'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(

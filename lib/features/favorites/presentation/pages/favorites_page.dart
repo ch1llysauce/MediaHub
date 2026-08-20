@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../library/presentation/widgets/media_item_tile.dart';
 import '../../../playlists/presentation/widgets/add_to_playlist_dialog.dart';
@@ -32,9 +33,7 @@ class _FavoritesPageState extends ConsumerState<FavoritesPage> {
           IconButton(
             icon: const Icon(Icons.search_rounded),
             tooltip: 'Search Favorites',
-            onPressed: () {
-              // Navigation to search will be hooked in Phase 9
-            },
+            onPressed: () => context.pushNamed('search'),
           ),
         ],
       ),

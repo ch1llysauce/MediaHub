@@ -5,14 +5,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../../../core/providers/providers.dart';
 import '../../../../domain/entities/media_item_entity.dart';
 import '../controllers/music_player_controller.dart';
 import '../widgets/up_next_banner_widget.dart';
 import '../../../favorites/presentation/controllers/favorites_controller.dart';
+import '../../../history/presentation/controllers/history_controller.dart';
 
 class VideoPlayerPage extends ConsumerStatefulWidget {
   final MediaItemEntity item;
   final List<MediaItemEntity>? playlist;
+
+  /// Whether a VideoPlayerPage is currently mounted / visible.
+  /// Used by MiniPlayerWidget to avoid pushing duplicate pages.
+  static bool isActive = false;
 
   const VideoPlayerPage({
     super.key,
@@ -44,6 +50,10 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
   bool _wasControlsVisibleOnPointerDown = true;
   bool _showRewindOverlay = false;
   bool _showForwardOverlay = false;
+  bool _isSeekingToHistory = false;
+  bool _isCompleted = false;
+  int _lastKnownValidPosition = 0;
+  int _targetSeekPosition = 0;
   int _seekAccumulatedSeconds = 0;
   Timer? _controlsTimer;
   Timer? _seekOverlayTimer;
@@ -53,18 +63,33 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
   @override
   void initState() {
     super.initState();
+    VideoPlayerPage.isActive = true;
 
     _currentItem = widget.item;
     _playlist = widget.playlist ?? [_currentItem];
     _currentIndex = _playlist.indexWhere((e) => e.id == _currentItem.id);
     if (_currentIndex < 0) _currentIndex = 0;
 
-    // Pause any active music audio playback without wiping player state
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(musicPlayerControllerProvider.notifier).pauseAudio();
-    });
+    ref.read(musicPlayerControllerProvider.notifier).pauseAudio();
 
-    _player = Player();
+    _player = Player(
+      configuration: const PlayerConfiguration(
+        logLevel: MPVLogLevel.debug,
+      ),
+    );
+    _player.stream.log.listen((event) {
+      debugPrint("[media_kit] ${event.prefix}: ${event.text}");
+    });
+    Future.microtask(() async {
+      try {
+        if (_player.platform is NativePlayer) {
+          final nativePlayer = _player.platform as NativePlayer;
+          await nativePlayer.setProperty('ao', 'audiotrack,opensles');
+        }
+      } catch (e) {
+        debugPrint("Error setting ao property: $e");
+      }
+    });
     _videoController = VideoController(_player);
 
     _player.stream.playing.listen((playing) {
@@ -74,20 +99,62 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
     });
 
     _player.stream.position.listen((pos) {
-      if (mounted) {
-        setState(() => _position = pos);
+      if (!mounted) return;
+
+      // Once the video has completed, ignore all further position events
+      // to prevent overwriting the saved position-0 with stale end-values
+      if (_isCompleted) return;
+
+      // While seeking to a saved position, block ALL position updates
+      // to prevent mpv's zero-flush events from corrupting state
+      if (_isSeekingToHistory) return;
+
+      // After seeking, if mpv sends a 0-position event but we have a
+      // known valid position, re-seek instead of accepting the zero
+      if (_targetSeekPosition > 1 && pos.inSeconds < 2) {
+        _player.seek(Duration(seconds: _targetSeekPosition));
+        return;
       }
+
+      // Once we get a real position near our target, clear the target lock
+      if (_targetSeekPosition > 1 && pos.inSeconds >= _targetSeekPosition - 1) {
+        _targetSeekPosition = 0;
+      }
+
+      if (pos.inSeconds > 1) {
+        _lastKnownValidPosition = pos.inSeconds;
+        ref.read(musicPlayerControllerProvider.notifier).updatePosition(pos);
+        if (pos.inSeconds % 5 == 0) {
+          ref.read(historyControllerProvider).recordPlayback(
+            _currentItem.id,
+            playbackPosition: pos.inSeconds,
+          );
+        }
+      }
+      setState(() => _position = pos);
     });
 
     _player.stream.duration.listen((dur) {
       if (mounted) {
         setState(() => _duration = dur);
+        if (dur.inSeconds > 0) {
+          ref.read(mediaRepositoryProvider).updateMediaDuration(_currentItem.id, dur.inSeconds);
+        }
       }
     });
 
     _player.stream.completed.listen((completed) {
-      if (completed && _autoPlayNext) {
-        _skipToNext();
+      if (completed) {
+        _isCompleted = true;
+        // Record position 0 so re-opening starts from the beginning
+        ref.read(historyControllerProvider).recordPlayback(
+          _currentItem.id,
+          playbackPosition: 0,
+        );
+        ref.read(musicPlayerControllerProvider.notifier).updatePosition(Duration.zero);
+        if (_autoPlayNext) {
+          _skipToNext();
+        }
       }
     });
 
@@ -121,9 +188,74 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
     }
   }
 
-  void _playCurrentMedia() {
+  Future<void> _playCurrentMedia() async {
+    _isCompleted = false;
+    _lastKnownValidPosition = 0;
+    final historyCtrl = ref.read(historyControllerProvider);
+    final dbSavedPos = await historyCtrl.getPlaybackPosition(_currentItem.id);
+    final runtimePos = ref.read(musicPlayerControllerProvider).position.inSeconds;
+
+    int savedPos = runtimePos > dbSavedPos ? runtimePos : dbSavedPos;
+
+    // If the saved position is near the end of the video (within 5 seconds),
+    // the video was previously completed — start from the beginning instead.
+    // Use metadata duration first, but also check actual player duration as
+    // fallback since metadata can be inaccurate or missing.
+    final mediaDuration = _currentItem.duration ?? 0;
+    final playerDuration = _duration.inSeconds;
+    final effectiveDuration = mediaDuration > 0 ? mediaDuration : playerDuration;
+    if (effectiveDuration > 0 && savedPos > 0 && (effectiveDuration - savedPos) <= 5) {
+      savedPos = 0;
+      // Clear the stale position from history so future plays also start fresh
+      historyCtrl.recordPlayback(_currentItem.id, playbackPosition: 0);
+      ref.read(musicPlayerControllerProvider.notifier).updatePosition(Duration.zero);
+    }
+
+    if (savedPos > 1 && mounted) {
+      _lastKnownValidPosition = savedPos;
+      _targetSeekPosition = savedPos;
+      _isSeekingToHistory = true;
+      setState(() => _position = Duration(seconds: savedPos));
+    } else {
+      _isSeekingToHistory = false;
+      _targetSeekPosition = 0;
+    }
+
     final videoUri = Uri.file(_currentItem.path).toString();
-    _player.open(Media(videoUri));
+    await _player.open(Media(videoUri));
+    await _player.setVolume(100.0);
+
+    if (savedPos > 1 && mounted) {
+      // Wait for mpv to report a non-zero duration (video fully loaded)
+      try {
+        await _player.stream.duration
+            .firstWhere((dur) => dur > Duration.zero)
+            .timeout(const Duration(seconds: 3));
+      } catch (_) {}
+
+      if (mounted) {
+        // Seek to the saved position
+        await _player.seek(Duration(seconds: savedPos));
+
+        // Wait for mpv to confirm it reached the target position
+        try {
+          await _player.stream.position
+              .firstWhere((pos) => pos.inSeconds >= savedPos - 1)
+              .timeout(const Duration(seconds: 5));
+        } catch (_) {
+          // If timeout, try seeking one more time
+          if (mounted) {
+            await _player.seek(Duration(seconds: savedPos));
+            await Future.delayed(const Duration(milliseconds: 500));
+          }
+        }
+      }
+    }
+
+    // Release the gatekeeper - the position listener will now accept events
+    // but _targetSeekPosition still guards against late zero-flushes
+    _isSeekingToHistory = false;
+    historyCtrl.recordPlayback(_currentItem.id, playbackPosition: savedPos > 1 ? savedPos : 0);
   }
 
   MediaItemEntity? _peekNextItem() {
@@ -201,10 +333,70 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
     });
   }
 
+  Future<void> _onBackPressed() async {
+    // If the video completed naturally, save position 0 so it restarts
+    // next time instead of getting stuck at the last second.
+    if (_isCompleted) {
+      await ref.read(historyControllerProvider).recordPlayback(
+        _currentItem.id,
+        playbackPosition: 0,
+      );
+      ref.read(musicPlayerControllerProvider.notifier).updatePosition(Duration.zero);
+    } else {
+      final posToSave = _lastKnownValidPosition > 1
+          ? _lastKnownValidPosition
+          : (_position.inSeconds > 0 ? _position.inSeconds : _player.state.position.inSeconds);
+
+      if (posToSave > 1) {
+        await ref.read(historyControllerProvider).recordPlayback(
+          _currentItem.id,
+          playbackPosition: posToSave,
+        );
+        ref.read(musicPlayerControllerProvider.notifier).updatePosition(Duration(seconds: posToSave));
+      }
+    }
+
+    ref.read(musicPlayerControllerProvider.notifier).pauseAudio();
+    try {
+      await _player.pause();
+      await _player.stop();
+    } catch (_) {}
+
+    if (mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
   @override
   void dispose() {
+    VideoPlayerPage.isActive = false;
     _controlsTimer?.cancel();
     _seekOverlayTimer?.cancel();
+
+    // If the video completed naturally, ensure position stays at 0
+    if (_isCompleted) {
+      ref.read(historyControllerProvider).recordPlayback(
+        _currentItem.id,
+        playbackPosition: 0,
+      );
+      ref.read(musicPlayerControllerProvider.notifier).updatePosition(Duration.zero);
+    } else {
+      final posToSave = _lastKnownValidPosition > 1
+          ? _lastKnownValidPosition
+          : (_position.inSeconds > 0 ? _position.inSeconds : _player.state.position.inSeconds);
+
+      if (posToSave > 1) {
+        ref.read(historyControllerProvider).recordPlayback(
+          _currentItem.id,
+          playbackPosition: posToSave,
+        );
+        ref.read(musicPlayerControllerProvider.notifier).updatePosition(Duration(seconds: posToSave));
+      }
+    }
+
+    ref.read(musicPlayerControllerProvider.notifier).pauseAudio();
+    _player.pause();
+    _player.stop();
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
@@ -259,137 +451,143 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
           durationSeconds > 0 ? durationSeconds : 1.0,
         );
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Listener(
-        onPointerDown: _onPointerDown,
-        child: GestureDetector(
-          onTap: _onVideoTap,
-          onDoubleTapDown: (details) {
-            final screenWidth = MediaQuery.of(context).size.width;
-            final tapX = details.globalPosition.dx;
-            if (tapX < screenWidth * 0.4) {
-              _seekRelative(-10);
-            } else if (tapX > screenWidth * 0.6) {
-              _seekRelative(10);
-            }
-          },
-          onHorizontalDragEnd: (details) {
-            _resetControlsTimer();
-            final velocity = details.primaryVelocity ?? 0;
-            if (velocity < -300) {
-              _skipToNext();
-            } else if (velocity > 300) {
-              _skipToPrevious();
-            }
-          },
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // Video Viewport
-              Center(
-                child: Video(
-                  controller: _videoController,
-                  controls: NoVideoControls,
-                ),
-              ),
-
-              // Double-Tap Rewind Overlay Indicator (-10s)
-              if (_showRewindOverlay)
-                Positioned(
-                  left: MediaQuery.of(context).size.width * 0.12,
-                  child: AnimatedOpacity(
-                    opacity: _showRewindOverlay ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 200),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.7),
-                        borderRadius: BorderRadius.circular(40),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.fast_rewind_rounded, color: Colors.white, size: 40),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${_seekAccumulatedSeconds.abs()} seconds',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        await _onBackPressed();
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Listener(
+          onPointerDown: _onPointerDown,
+          child: GestureDetector(
+            onTap: _onVideoTap,
+            onDoubleTapDown: (details) {
+              final screenWidth = MediaQuery.of(context).size.width;
+              final tapX = details.globalPosition.dx;
+              if (tapX < screenWidth * 0.4) {
+                _seekRelative(-10);
+              } else if (tapX > screenWidth * 0.6) {
+                _seekRelative(10);
+              }
+            },
+            onHorizontalDragEnd: (details) {
+              _resetControlsTimer();
+              final velocity = details.primaryVelocity ?? 0;
+              if (velocity < -300) {
+                _skipToNext();
+              } else if (velocity > 300) {
+                _skipToPrevious();
+              }
+            },
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // Video Viewport
+                Center(
+                  child: Video(
+                    controller: _videoController,
+                    controls: NoVideoControls,
                   ),
                 ),
 
-              // Double-Tap Forward Overlay Indicator (+10s)
-              if (_showForwardOverlay)
-                Positioned(
-                  right: MediaQuery.of(context).size.width * 0.12,
-                  child: AnimatedOpacity(
-                    opacity: _showForwardOverlay ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 200),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.7),
-                        borderRadius: BorderRadius.circular(40),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.fast_forward_rounded, color: Colors.white, size: 40),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${_seekAccumulatedSeconds.abs()} seconds',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
+                // Double-Tap Rewind Overlay Indicator (-10s)
+                if (_showRewindOverlay)
+                  Positioned(
+                    left: MediaQuery.of(context).size.width * 0.12,
+                    child: AnimatedOpacity(
+                      opacity: _showRewindOverlay ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 200),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.7),
+                          borderRadius: BorderRadius.circular(40),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.fast_rewind_rounded, color: Colors.white, size: 40),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${_seekAccumulatedSeconds.abs()} seconds',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
 
-              // Video Controls Overlay with Animated Opacity
-              AnimatedOpacity(
-                opacity: _showControls ? 1.0 : 0.0,
-                duration: const Duration(milliseconds: 300),
-                child: IgnorePointer(
-                  ignoring: !_showControls,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      // Top Header Bar
-                      Positioned(
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        child: Container(
-                          decoration: const BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [Colors.black87, Colors.transparent],
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
+                // Double-Tap Forward Overlay Indicator (+10s)
+                if (_showForwardOverlay)
+                  Positioned(
+                    right: MediaQuery.of(context).size.width * 0.12,
+                    child: AnimatedOpacity(
+                      opacity: _showForwardOverlay ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 200),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.7),
+                          borderRadius: BorderRadius.circular(40),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.fast_forward_rounded, color: Colors.white, size: 40),
+                            const SizedBox(height: 4),
+                            Text(
+                              '${_seekAccumulatedSeconds.abs()} seconds',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          ),
-                          child: SafeArea(
-                            bottom: false,
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-                              child: Row(
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
-                                    onPressed: () => Navigator.of(context).pop(),
-                                  ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // Video Controls Overlay with Animated Opacity
+                AnimatedOpacity(
+                  opacity: _showControls ? 1.0 : 0.0,
+                  duration: const Duration(milliseconds: 300),
+                  child: IgnorePointer(
+                    ignoring: !_showControls,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        // Top Header Bar
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: Container(
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                colors: [Colors.black87, Colors.transparent],
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                              ),
+                            ),
+                            child: SafeArea(
+                              bottom: false,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                                child: Row(
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+                                      onPressed: _onBackPressed,
+                                    ),
                                   Expanded(
                                     child: Text(
                                       _currentItem.title,
@@ -651,6 +849,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }

@@ -7,7 +7,10 @@ import 'package:just_audio/just_audio.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../core/services/audio_player_service.dart';
 import '../../../../domain/entities/media_item_entity.dart';
+import '../../../../domain/repositories/history_repository.dart';
+import '../../../../domain/repositories/media_repository.dart';
 import '../../../../domain/repositories/playlist_repository.dart';
+import '../../../history/presentation/controllers/history_controller.dart';
 
 enum PlayerRepeatMode { off, all, one }
 
@@ -82,6 +85,8 @@ class MusicPlayerState {
 class MusicPlayerController extends StateNotifier<MusicPlayerState> {
   final AudioPlayerService _audioService;
   final PlaylistRepository? _playlistRepository;
+  final HistoryRepository? _historyRepository;
+  final MediaRepository? _mediaRepository;
   StreamSubscription<PlayerState>? _playerStateSub;
   StreamSubscription<Duration>? _positionSub;
   StreamSubscription<Duration?>? _durationSub;
@@ -90,6 +95,8 @@ class MusicPlayerController extends StateNotifier<MusicPlayerState> {
   MusicPlayerController(
     this._audioService, [
     this._playlistRepository,
+    this._historyRepository,
+    this._mediaRepository,
   ]) : super(const MusicPlayerState()) {
     _listenToStreams();
   }
@@ -146,6 +153,10 @@ class MusicPlayerController extends StateNotifier<MusicPlayerState> {
     _durationSub = _audioService.durationStream.listen((dur) {
       if (dur != null) {
         state = state.copyWith(duration: dur);
+        final activeId = state.activeItem?.id;
+        if (activeId != null && dur.inSeconds > 0) {
+          _mediaRepository?.updateMediaDuration(activeId, dur.inSeconds);
+        }
       }
     });
   }
@@ -281,17 +292,23 @@ class MusicPlayerController extends StateNotifier<MusicPlayerState> {
       newShuffled = const [];
     }
 
+    final savedPos = await _historyRepository?.getPlaybackPosition(item.id) ?? 0;
+    final runtimePos = state.activeItem?.id == item.id ? state.position.inSeconds : 0;
+    final effectiveSavedPos = runtimePos > savedPos ? runtimePos : savedPos;
+
     state = state.copyWith(
       activeItem: item,
       queue: newQueue,
       currentIndex: targetIndex,
       isShuffle: shouldShuffle,
       shuffledIndices: newShuffled,
-      position: Duration.zero,
+      position: Duration(seconds: effectiveSavedPos),
       duration: Duration(seconds: item.duration ?? 0),
       activePlaylistId: playlistId,
       clearActivePlaylistId: playlistId == null,
     );
+
+    _historyRepository?.recordPlayback(item.id, playbackPosition: savedPos > 0 ? savedPos : null);
 
     if (item.mediaType == 'audio') {
       try {
@@ -311,12 +328,17 @@ class MusicPlayerController extends StateNotifier<MusicPlayerState> {
   Future<void> pauseAudio() async {
     try {
       await _audioService.pause();
+      await _audioService.stop();
     } catch (_) {}
     state = state.copyWith(isPlaying: false);
   }
 
   Future<void> togglePlayPause() async {
     if (state.activeItem == null) return;
+
+    if (state.activeItem?.mediaType == 'video') {
+      return;
+    }
 
     if (state.isPlaying) {
       await _audioService.pause();
@@ -326,14 +348,24 @@ class MusicPlayerController extends StateNotifier<MusicPlayerState> {
   }
 
   Future<void> closePlayer() async {
+    final activeId = state.activeItem?.id;
+    if (activeId != null) {
+      await _historyRepository?.recordPlayback(activeId, playbackPosition: 0);
+    }
     await _playlistSub?.cancel();
     _playlistSub = null;
     await _audioService.stop();
     state = const MusicPlayerState();
   }
 
+  void updatePosition(Duration position) {
+    state = state.copyWith(position: position);
+  }
+
   Future<void> seek(Duration position) async {
-    await _audioService.seek(position);
+    if (state.activeItem?.mediaType == 'audio') {
+      await _audioService.seek(position);
+    }
     state = state.copyWith(position: position);
   }
 
@@ -462,5 +494,7 @@ final musicPlayerControllerProvider =
     StateNotifierProvider<MusicPlayerController, MusicPlayerState>((ref) {
   final audioService = ref.watch(audioPlayerServiceProvider);
   final playlistRepo = ref.watch(playlistRepositoryProvider);
-  return MusicPlayerController(audioService, playlistRepo);
+  final historyRepo = ref.watch(historyRepositoryProvider);
+  final mediaRepo = ref.watch(mediaRepositoryProvider);
+  return MusicPlayerController(audioService, playlistRepo, historyRepo, mediaRepo);
 });

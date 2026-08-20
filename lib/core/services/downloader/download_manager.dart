@@ -1,0 +1,267 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:dio/dio.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+
+import '../../../domain/entities/download_task_entity.dart';
+import '../../../domain/repositories/download_repository.dart';
+import '../../../domain/repositories/media_repository.dart';
+import 'media_source_provider.dart';
+
+class DownloadManager {
+  final DownloadRepository _downloadRepository;
+  final MediaRepository _mediaRepository;
+  final Dio _dio;
+  final List<MediaSourceProvider> _providers;
+  final Map<String, CancelToken> _cancelTokens = {};
+
+  DownloadManager({
+    required DownloadRepository downloadRepository,
+    required MediaRepository mediaRepository,
+    Dio? dio,
+    List<MediaSourceProvider>? providers,
+  })  : _downloadRepository = downloadRepository,
+        _mediaRepository = mediaRepository,
+        _dio = dio ?? Dio(),
+        _providers = providers ??
+            [
+              DirectMediaSourceProvider(),
+              YoutubeSourceProvider(),
+              TikTokSourceProvider(),
+              InstagramSourceProvider(),
+              FacebookSourceProvider(),
+              GenericSocialMediaProvider(),
+            ];
+
+  /// Utility to sanitize file names to prevent path traversal attacks (../) and illegal characters
+  static String sanitizeFilename(String name, String ext) {
+    var safeName = name.replaceAll(RegExp(r'[\\/:*?"<>|.]'), '_').trim();
+    if (safeName.isEmpty) {
+      safeName = 'media_${DateTime.now().millisecondsSinceEpoch}';
+    }
+    return '$safeName$ext';
+  }
+
+  /// Get the app's designated download folder path
+  Future<String> getDownloadDirectory() async {
+    if (Platform.isAndroid) {
+      final publicDownloadDir = Directory('/storage/emulated/0/Download/MediaHub');
+      try {
+        if (!await publicDownloadDir.exists()) {
+          await publicDownloadDir.create(recursive: true);
+        }
+        return publicDownloadDir.path;
+      } catch (_) {}
+    }
+
+    final appDir = await getApplicationDocumentsDirectory();
+    final downloadDir = Directory(p.join(appDir.path, 'MediaHub_Downloads'));
+    if (!await downloadDir.exists()) {
+      await downloadDir.create(recursive: true);
+    }
+    return downloadDir.path;
+  }
+
+  /// Resolve media info (thumbnail, title, streams, qualities) before downloading
+  Future<MediaSourceInfo> resolveSourceInfo(String urlString, {bool audioOnly = false}) async {
+    final uri = Uri.parse(urlString.trim());
+    final provider = _providers.firstWhere(
+      (p) => p.canHandle(uri),
+      orElse: () => DirectMediaSourceProvider(),
+    );
+    return await provider.resolve(uri, audioOnly: audioOnly);
+  }
+
+  /// Enqueue and start a new URL download
+  Future<String> startDownload(
+    String urlString, {
+    bool audioOnly = false,
+    String? customTitle,
+    String? customStreamUrl,
+  }) async {
+    final uri = Uri.parse(urlString.trim());
+    final taskId = 'dl_${DateTime.now().millisecondsSinceEpoch}_${uri.hashCode.abs()}';
+    final downloadFolder = await getDownloadDirectory();
+
+    // Find provider
+    final provider = _providers.firstWhere(
+      (p) => p.canHandle(uri),
+      orElse: () => DirectMediaSourceProvider(),
+    );
+
+    // Initial queued task
+    final initialTask = DownloadTaskEntity(
+      id: taskId,
+      url: urlString,
+      title: customTitle,
+      destinationPath: p.join(downloadFolder, 'pending_$taskId'),
+      status: DownloadStatus.resolving,
+      progress: 0.0,
+      bytesDownloaded: 0,
+      totalBytes: 0,
+      createdAt: DateTime.now(),
+    );
+
+    await _downloadRepository.saveTask(initialTask);
+    _executeDownloadTask(
+      taskId,
+      uri,
+      provider,
+      downloadFolder,
+      audioOnly: audioOnly,
+      customTitle: customTitle,
+      customStreamUrl: customStreamUrl,
+    );
+    return taskId;
+  }
+
+  /// Execute resolution and HTTP stream downloading in background
+  Future<void> _executeDownloadTask(
+    String taskId,
+    Uri uri,
+    MediaSourceProvider provider,
+    String downloadFolder, {
+    bool audioOnly = false,
+    String? customTitle,
+    String? customStreamUrl,
+  }) async {
+    final cancelToken = CancelToken();
+    _cancelTokens[taskId] = cancelToken;
+
+    try {
+      await _downloadRepository.updateStatus(taskId, DownloadStatus.resolving);
+      
+      final MediaSourceInfo mediaInfo;
+      if (customStreamUrl != null && customStreamUrl.isNotEmpty) {
+        mediaInfo = MediaSourceInfo(
+          title: customTitle ?? 'Download Media',
+          streamUrl: customStreamUrl,
+          mediaType: audioOnly ? 'audio' : 'video',
+          fileExtension: audioOnly ? '.mp3' : '.mp4',
+        );
+      } else {
+        mediaInfo = await provider.resolve(uri, audioOnly: audioOnly);
+      }
+
+      if (cancelToken.isCancelled) return;
+
+      final uniqueResult = generateUniqueDestinationPathAndTitle(
+        downloadFolder,
+        mediaInfo.title,
+        mediaInfo.fileExtension,
+      );
+      final targetPath = uniqueResult.targetPath;
+      final uniqueTitle = uniqueResult.uniqueTitle;
+
+      // Save task target path and non-overwriting title
+      final task = await _downloadRepository.getTaskById(taskId);
+      if (task != null) {
+        await _downloadRepository.saveTask(
+          task.copyWith(
+            destinationPath: targetPath,
+            title: uniqueTitle,
+            mediaType: mediaInfo.mediaType,
+            status: DownloadStatus.downloading,
+          ),
+        );
+      }
+
+      await _dio.download(
+        mediaInfo.streamUrl,
+        targetPath,
+        cancelToken: cancelToken,
+        onReceiveProgress: (received, total) {
+          if (total > 0) {
+            final progress = (received / total).clamp(0.0, 1.0);
+            _downloadRepository.updateProgress(taskId, progress, received, total);
+          }
+        },
+      );
+
+      if (cancelToken.isCancelled) return;
+
+      // Mark task as completed
+      await _downloadRepository.updateStatus(taskId, DownloadStatus.completed);
+      await _downloadRepository.updateProgress(taskId, 1.0, 0, 0);
+
+      // Auto-ingest downloaded file into SQLite Media Library asynchronously & lightweight
+      unawaited(_mediaRepository.scanSingleFile(targetPath));
+    } on DioException catch (e) {
+      if (CancelToken.isCancel(e)) {
+        await _downloadRepository.updateStatus(taskId, DownloadStatus.cancelled);
+      } else {
+        await _downloadRepository.updateStatus(
+          taskId,
+          DownloadStatus.failed,
+          errorMessage: 'Unable to connect to source. Please check your internet connection or URL.',
+        );
+      }
+    } catch (e) {
+      var msg = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '').trim();
+      if (msg.contains('DioException') || msg.contains('validateStatus')) {
+        msg = 'Unable to resolve video stream from this link. Make sure the post is public.';
+      }
+      await _downloadRepository.updateStatus(
+        taskId,
+        DownloadStatus.failed,
+        errorMessage: msg,
+      );
+    } finally {
+      _cancelTokens.remove(taskId);
+    }
+  }
+
+  /// Cancel an active download task
+  Future<void> cancelDownload(String taskId) async {
+    final token = _cancelTokens[taskId];
+    if (token != null && !token.isCancelled) {
+      token.cancel('User cancelled download');
+    }
+    await _downloadRepository.updateStatus(taskId, DownloadStatus.cancelled);
+  }
+
+  /// Delete download task record and remove partially downloaded file
+  Future<void> deleteTask(String taskId) async {
+    final task = await _downloadRepository.getTaskById(taskId);
+    if (task != null) {
+      await cancelDownload(taskId);
+      final file = File(task.destinationPath);
+      if (await file.exists()) {
+        try {
+          await file.delete();
+        } catch (_) {}
+      }
+      await _downloadRepository.deleteTask(taskId);
+    }
+  }
+
+  /// Generates a unique, non-overwriting destination file path and display title.
+  /// If a file with the same title exists on disk, it appends an incremental index:
+  /// e.g. "My Video.mp4" -> "My Video (1).mp4" -> "My Video (2).mp4".
+  static ({String targetPath, String uniqueTitle}) generateUniqueDestinationPathAndTitle(
+    String downloadFolder,
+    String rawTitle,
+    String fileExtension,
+  ) {
+    final ext = fileExtension.startsWith('.') ? fileExtension : '.$fileExtension';
+    final baseTitle = sanitizeFilename(rawTitle, '');
+
+    var candidateTitle = baseTitle;
+    var candidatePath = p.join(downloadFolder, '$candidateTitle$ext');
+    if (!File(candidatePath).existsSync()) {
+      return (targetPath: candidatePath, uniqueTitle: candidateTitle);
+    }
+
+    int counter = 1;
+    while (true) {
+      candidateTitle = '$baseTitle ($counter)';
+      candidatePath = p.join(downloadFolder, '$candidateTitle$ext');
+      if (!File(candidatePath).existsSync()) {
+        return (targetPath: candidatePath, uniqueTitle: candidateTitle);
+      }
+      counter++;
+    }
+  }
+}
