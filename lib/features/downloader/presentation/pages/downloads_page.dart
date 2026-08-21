@@ -10,13 +10,7 @@ import '../../../player/presentation/controllers/music_player_controller.dart';
 import '../controllers/downloads_controller.dart';
 import '../widgets/download_url_dialog.dart';
 
-enum DownloadSortOption {
-  newest,
-  oldest,
-  titleAz,
-  titleZa,
-  sizeDesc,
-}
+enum DownloadSortOption { newest, oldest, titleAz, titleZa, sizeDesc }
 
 class DownloadsPage extends ConsumerStatefulWidget {
   const DownloadsPage({super.key});
@@ -51,10 +45,18 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
         list.sort((a, b) => a.createdAt.compareTo(b.createdAt));
         break;
       case DownloadSortOption.titleAz:
-        list.sort((a, b) => _getDisplayTitle(a).toLowerCase().compareTo(_getDisplayTitle(b).toLowerCase()));
+        list.sort(
+          (a, b) => _getDisplayTitle(
+            a,
+          ).toLowerCase().compareTo(_getDisplayTitle(b).toLowerCase()),
+        );
         break;
       case DownloadSortOption.titleZa:
-        list.sort((a, b) => _getDisplayTitle(b).toLowerCase().compareTo(_getDisplayTitle(a).toLowerCase()));
+        list.sort(
+          (a, b) => _getDisplayTitle(
+            b,
+          ).toLowerCase().compareTo(_getDisplayTitle(a).toLowerCase()),
+        );
         break;
       case DownloadSortOption.sizeDesc:
         list.sort((a, b) => b.totalBytes.compareTo(a.totalBytes));
@@ -185,34 +187,47 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
       ),
       body: downloadsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (err, stack) => Center(
-          child: Text('Error loading downloads: $err'),
-        ),
+        error: (err, stack) =>
+            Center(child: Text('Error loading downloads: $err')),
         data: (tasks) {
           if (tasks.isEmpty) {
             return _buildEmptyState(context);
           }
 
-          final activeTasks = _sortTasks(tasks.where((t) => t.isActive).toList());
-          final completedTasks = _sortTasks(tasks.where((t) => t.isCompleted).toList());
-          final otherTasks = _sortTasks(tasks.where((t) => !t.isActive && !t.isCompleted).toList());
+          final activeTasks = _sortTasks(
+            tasks.where((t) => t.isActive).toList(),
+          );
+          final completedTasks = _sortTasks(
+            tasks.where((t) => t.isCompleted).toList(),
+          );
+          final otherTasks = _sortTasks(
+            tasks.where((t) => !t.isActive && !t.isCompleted).toList(),
+          );
 
           return CustomScrollView(
             slivers: [
               if (activeTasks.isNotEmpty) ...[
-                _buildSectionHeader(context, 'Active Downloads (${activeTasks.length})'),
+                _buildSectionHeader(
+                  context,
+                  'Active Downloads (${activeTasks.length})',
+                ),
                 SliverList(
                   delegate: SliverChildBuilderDelegate(
-                    (context, index) => _DownloadTaskTile(task: activeTasks[index]),
+                    (context, index) =>
+                        _DownloadTaskTile(task: activeTasks[index]),
                     childCount: activeTasks.length,
                   ),
                 ),
               ],
               if (completedTasks.isNotEmpty) ...[
-                _buildSectionHeader(context, 'Completed (${completedTasks.length})'),
+                _buildSectionHeader(
+                  context,
+                  'Completed (${completedTasks.length})',
+                ),
                 SliverList(
                   delegate: SliverChildBuilderDelegate(
-                    (context, index) => _DownloadTaskTile(task: completedTasks[index]),
+                    (context, index) =>
+                        _DownloadTaskTile(task: completedTasks[index]),
                     childCount: completedTasks.length,
                   ),
                 ),
@@ -221,7 +236,8 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
                 _buildSectionHeader(context, 'Other (${otherTasks.length})'),
                 SliverList(
                   delegate: SliverChildBuilderDelegate(
-                    (context, index) => _DownloadTaskTile(task: otherTasks[index]),
+                    (context, index) =>
+                        _DownloadTaskTile(task: otherTasks[index]),
                     childCount: otherTasks.length,
                   ),
                 ),
@@ -261,7 +277,9 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
             Container(
               padding: const EdgeInsets.all(24.0),
               decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+                color: theme.colorScheme.primaryContainer.withValues(
+                  alpha: 0.3,
+                ),
                 shape: BoxShape.circle,
               ),
               child: Icon(
@@ -355,9 +373,13 @@ class _DownloadTaskTile extends ConsumerWidget {
     }
     if (task.status == DownloadStatus.completed) {
       final ext = task.destinationPath.contains('.')
-          ? task.destinationPath.substring(task.destinationPath.lastIndexOf('.')).toUpperCase()
+          ? task.destinationPath
+                .substring(task.destinationPath.lastIndexOf('.'))
+                .toUpperCase()
           : (task.mediaType == 'audio' ? '.MP3' : '.MP4');
-      final size = task.totalBytes > 0 ? ' • ${_formatBytes(task.totalBytes)}' : '';
+      final size = task.totalBytes > 0
+          ? ' • ${_formatBytes(task.totalBytes)}'
+          : '';
       return 'Completed $ext$size';
     }
     if (task.status == DownloadStatus.failed) {
@@ -445,20 +467,20 @@ class _DownloadTaskTile extends ConsumerWidget {
                       ],
                     ),
                   ),
-                  if (task.isActive)
-                    task.isPaused
-                        ? IconButton(
-                            icon: const Icon(Icons.play_circle_outline),
-                            color: Colors.green,
-                            tooltip: 'Resume Download',
-                            onPressed: () => controller.resumeDownload(task.id),
-                          )
-                        : IconButton(
-                            icon: const Icon(Icons.pause_circle_outline),
-                            color: Colors.orange,
-                            tooltip: 'Pause Download',
-                            onPressed: () => controller.pauseDownload(task.id),
-                          ),
+                  if (task.isPaused)
+                    IconButton(
+                      icon: const Icon(Icons.play_circle_outline),
+                      color: Colors.green,
+                      tooltip: 'Resume Download',
+                      onPressed: () => controller.resumeDownload(task.id),
+                    )
+                  else if (task.isActive)
+                    IconButton(
+                      icon: const Icon(Icons.pause_circle_outline),
+                      color: Colors.orange,
+                      tooltip: 'Pause Download',
+                      onPressed: () => controller.pauseDownload(task.id),
+                    ),
                   if (task.isActive && !task.isPaused)
                     IconButton(
                       icon: const Icon(Icons.stop_circle_outlined),
@@ -484,7 +506,9 @@ class _DownloadTaskTile extends ConsumerWidget {
               if (task.isActive) ...[
                 const SizedBox(height: 10),
                 LinearProgressIndicator(
-                  value: task.status == DownloadStatus.resolving ? null : task.progress,
+                  value: task.status == DownloadStatus.resolving
+                      ? null
+                      : task.progress,
                   borderRadius: BorderRadius.circular(4),
                 ),
               ],
@@ -539,9 +563,7 @@ class _DownloadDetailsModal extends ConsumerWidget {
         title: const Text('Instagram Debug Log'),
         content: SizedBox(
           width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: SelectableText(trace),
-          ),
+          child: SingleChildScrollView(child: SelectableText(trace)),
         ),
         actions: [
           TextButton.icon(
@@ -605,17 +627,21 @@ class _DownloadDetailsModal extends ConsumerWidget {
                       color: task.isCompleted
                           ? Colors.green.withValues(alpha: 0.15)
                           : (task.isFailed
-                              ? colorScheme.errorContainer
-                              : colorScheme.primaryContainer),
+                                ? colorScheme.errorContainer
+                                : colorScheme.primaryContainer),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
                       task.isCompleted
                           ? Icons.check_circle_rounded
-                          : (task.isFailed ? Icons.error_rounded : Icons.downloading_rounded),
+                          : (task.isFailed
+                                ? Icons.error_rounded
+                                : Icons.downloading_rounded),
                       color: task.isCompleted
                           ? Colors.green
-                          : (task.isFailed ? colorScheme.error : colorScheme.primary),
+                          : (task.isFailed
+                                ? colorScheme.error
+                                : colorScheme.primary),
                       size: 28,
                     ),
                   ),
@@ -634,13 +660,16 @@ class _DownloadDetailsModal extends ConsumerWidget {
                         ),
                         const SizedBox(height: 4),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: task.isCompleted
                                 ? Colors.green.withValues(alpha: 0.2)
                                 : (task.isFailed
-                                    ? colorScheme.errorContainer
-                                    : colorScheme.secondaryContainer),
+                                      ? colorScheme.errorContainer
+                                      : colorScheme.secondaryContainer),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
@@ -650,8 +679,8 @@ class _DownloadDetailsModal extends ConsumerWidget {
                               color: task.isCompleted
                                   ? Colors.green
                                   : (task.isFailed
-                                      ? colorScheme.onErrorContainer
-                                      : colorScheme.onSecondaryContainer),
+                                        ? colorScheme.onErrorContainer
+                                        : colorScheme.onSecondaryContainer),
                             ),
                           ),
                         ),
@@ -709,18 +738,25 @@ class _DownloadDetailsModal extends ConsumerWidget {
                 value: task.createdAt.toLocal().toString().split('.').first,
               ),
 
-              if (task.errorMessage != null && task.errorMessage!.isNotEmpty) ...[
+              if (task.errorMessage != null &&
+                  task.errorMessage!.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: colorScheme.errorContainer.withValues(alpha: 0.5),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: colorScheme.error.withValues(alpha: 0.3)),
+                    border: Border.all(
+                      color: colorScheme.error.withValues(alpha: 0.3),
+                    ),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.warning_amber_rounded, color: colorScheme.error, size: 20),
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: colorScheme.error,
+                        size: 20,
+                      ),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
@@ -787,7 +823,9 @@ class _DownloadDetailsModal extends ConsumerWidget {
                           final allMedia = await repository.getAllMedia();
                           final mediaItem = allMedia.firstWhere(
                             (m) => m.path == task.destinationPath,
-                            orElse: () => allMedia.isNotEmpty ? allMedia.first : throw Exception('File not in library'),
+                            orElse: () => allMedia.isNotEmpty
+                                ? allMedia.first
+                                : throw Exception('File not in library'),
                           );
                           ref
                               .read(musicPlayerControllerProvider.notifier)

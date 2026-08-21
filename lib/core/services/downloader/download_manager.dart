@@ -17,24 +17,26 @@ class DownloadManager {
   final Dio _dio;
   final List<MediaSourceProvider> _providers;
   final Map<String, CancelToken> _cancelTokens = {};
+  final Set<String> _pauseRequested = {};
 
   DownloadManager({
     required DownloadRepository downloadRepository,
     required MediaRepository mediaRepository,
     Dio? dio,
     List<MediaSourceProvider>? providers,
-  })  : _downloadRepository = downloadRepository,
-        _mediaRepository = mediaRepository,
-        _dio = dio ?? Dio(),
-        _providers = providers ??
-            [
-              DirectMediaSourceProvider(),
-              YoutubeSourceProvider(),
-              TikTokSourceProvider(),
-              InstagramSourceProvider(),
-              FacebookSourceProvider(),
-              GenericSocialMediaProvider(),
-            ];
+  }) : _downloadRepository = downloadRepository,
+       _mediaRepository = mediaRepository,
+       _dio = dio ?? Dio(),
+       _providers =
+           providers ??
+           [
+             DirectMediaSourceProvider(),
+             YoutubeSourceProvider(),
+             TikTokSourceProvider(),
+             InstagramSourceProvider(),
+             FacebookSourceProvider(),
+             GenericSocialMediaProvider(),
+           ];
 
   /// Utility to sanitize file names to prevent path traversal attacks (../) and illegal characters
   static String sanitizeFilename(String name, String ext) {
@@ -62,7 +64,9 @@ class DownloadManager {
     }
 
     if (Platform.isAndroid) {
-      final publicDownloadDir = Directory('/storage/emulated/0/Download/MediaHub');
+      final publicDownloadDir = Directory(
+        '/storage/emulated/0/Download/MediaHub',
+      );
       try {
         if (!await publicDownloadDir.exists()) {
           await publicDownloadDir.create(recursive: true);
@@ -90,7 +94,10 @@ class DownloadManager {
   }
 
   /// Resolve media info (thumbnail, title, streams, qualities) before downloading
-  Future<MediaSourceInfo> resolveSourceInfo(String urlString, {bool audioOnly = false}) async {
+  Future<MediaSourceInfo> resolveSourceInfo(
+    String urlString, {
+    bool audioOnly = false,
+  }) async {
     final uri = Uri.parse(urlString.trim());
     final provider = _providers.firstWhere(
       (p) => p.canHandle(uri),
@@ -107,7 +114,8 @@ class DownloadManager {
     String? customStreamUrl,
   }) async {
     final uri = Uri.parse(urlString.trim());
-    final taskId = 'dl_${DateTime.now().millisecondsSinceEpoch}_${uri.hashCode.abs()}';
+    final taskId =
+        'dl_${DateTime.now().millisecondsSinceEpoch}_${uri.hashCode.abs()}';
     final downloadFolder = await getDownloadDirectory();
 
     // Find provider
@@ -130,14 +138,16 @@ class DownloadManager {
     );
 
     await _downloadRepository.saveTask(initialTask);
-    _executeDownloadTask(
-      taskId,
-      uri,
-      provider,
-      downloadFolder,
-      audioOnly: audioOnly,
-      customTitle: customTitle,
-      customStreamUrl: customStreamUrl,
+    unawaited(
+      _executeDownloadTask(
+        taskId,
+        uri,
+        provider,
+        downloadFolder,
+        audioOnly: audioOnly,
+        customTitle: customTitle,
+        customStreamUrl: customStreamUrl,
+      ),
     );
     return taskId;
   }
@@ -157,8 +167,9 @@ class DownloadManager {
 
     try {
       await _downloadRepository.updateStatus(taskId, DownloadStatus.resolving);
-      
+
       final MediaSourceInfo mediaInfo;
+
       if (customStreamUrl != null && customStreamUrl.isNotEmpty) {
         mediaInfo = MediaSourceInfo(
           title: customTitle ?? 'Download Media',
@@ -172,90 +183,233 @@ class DownloadManager {
 
       if (cancelToken.isCancelled) return;
 
-      final uniqueResult = generateUniqueDestinationPathAndTitle(
-        downloadFolder,
-        mediaInfo.title,
-        mediaInfo.fileExtension,
-      );
-      final targetPath = uniqueResult.targetPath;
-      final uniqueTitle = uniqueResult.uniqueTitle;
+      final existingTask = await _downloadRepository.getTaskById(taskId);
 
-      // Save task target path and non-overwriting title
-      final task = await _downloadRepository.getTaskById(taskId);
-      if (task != null) {
-        await _downloadRepository.saveTask(
-          task.copyWith(
-            destinationPath: targetPath,
-            title: uniqueTitle,
-            mediaType: mediaInfo.mediaType,
-            status: DownloadStatus.downloading,
-          ),
+      if (existingTask == null) return;
+
+      /*
+     * IMPORTANT:
+     * If this task already has a real destination path, preserve it.
+     * This is what allows pause/resume to continue the same file.
+     */
+      String targetPath;
+      String uniqueTitle;
+
+      final existingPath = existingTask.destinationPath;
+      final existingFile = File(existingPath);
+
+      if (existingTask.status == DownloadStatus.paused &&
+          await existingFile.exists() &&
+          !existingPath.contains('pending_$taskId')) {
+        targetPath = existingPath;
+        uniqueTitle = existingTask.title ?? mediaInfo.title;
+      } else {
+        final uniqueResult = generateUniqueDestinationPathAndTitle(
+          downloadFolder,
+          customTitle ?? mediaInfo.title,
+          mediaInfo.fileExtension,
         );
+
+        targetPath = uniqueResult.targetPath;
+        uniqueTitle = uniqueResult.uniqueTitle;
       }
 
+      await _downloadRepository.saveTask(
+        existingTask.copyWith(
+          destinationPath: targetPath,
+          title: uniqueTitle,
+          mediaType: mediaInfo.mediaType,
+          status: DownloadStatus.downloading,
+        ),
+      );
+
       final streamUrlLower = mediaInfo.streamUrl.toLowerCase();
-      final String referer;
-      if (streamUrlLower.contains('instagram') || streamUrlLower.contains('cdninstagram')) {
+
+      String referer;
+
+      if (streamUrlLower.contains('instagram') ||
+          streamUrlLower.contains('cdninstagram')) {
         referer = 'https://www.instagram.com/';
-      } else if (streamUrlLower.contains('facebook') || streamUrlLower.contains('fbcdn')) {
+      } else if (streamUrlLower.contains('facebook') ||
+          streamUrlLower.contains('fbcdn')) {
         referer = 'https://www.facebook.com/';
-      } else if (streamUrlLower.contains('tiktok') || streamUrlLower.contains('tikwm')) {
+      } else if (streamUrlLower.contains('tiktok') ||
+          streamUrlLower.contains('tikwm')) {
         referer = 'https://www.tiktok.com/';
       } else {
         referer = 'https://www.google.com/';
       }
 
-      final downloadResponse = await _dio.download(
+      final file = File(targetPath);
+
+      var existingBytes = 0;
+
+      if (await file.exists()) {
+        existingBytes = await file.length();
+      }
+
+      final headers = <String, dynamic>{
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/120.0.0.0 Safari/537.36',
+        'Referer': referer,
+        'Accept': '*/*',
+      };
+
+      if (existingBytes > 0) {
+        headers['Range'] = 'bytes=$existingBytes-';
+      }
+
+      final response = await _dio.get<ResponseBody>(
         mediaInfo.streamUrl,
-        targetPath,
         cancelToken: cancelToken,
         options: Options(
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': referer,
+          responseType: ResponseType.stream,
+          headers: headers,
+          validateStatus: (status) {
+            return status != null && status >= 200 && status < 300;
           },
         ),
-        onReceiveProgress: (received, total) {
-          if (total > 0) {
-            final progress = (received / total).clamp(0.0, 1.0);
-            _downloadRepository.updateProgress(taskId, progress, received, total);
-          }
-        },
       );
 
-      if (cancelToken.isCancelled) return;
+      final statusCode = response.statusCode ?? 0;
 
+      final isResumeRequest = existingBytes > 0;
+      final supportsRange = statusCode == 206;
+
+      var startOffset = existingBytes;
+
+      /*
+     * Server does not support HTTP Range.
+     *
+     * We cannot append to the partial file because doing so
+     * would corrupt the downloaded media.
+     */
+      if (isResumeRequest && !supportsRange) {
+        startOffset = 0;
+
+        if (await file.exists()) {
+          await file.delete();
+        }
+      }
+
+      final contentLength =
+          int.tryParse(
+            response.headers.value(Headers.contentLengthHeader) ?? '',
+          ) ??
+          0;
+
+      final totalBytes = startOffset + contentLength;
+
+      var received = 0;
+
+      final sink = file.openWrite(
+        mode: startOffset > 0 ? FileMode.append : FileMode.write,
+      );
+
+      try {
+        await for (final chunk in response.data!.stream) {
+          if (cancelToken.isCancelled) {
+            break;
+          }
+
+          sink.add(chunk);
+
+          received += chunk.length;
+
+          final currentBytes = startOffset + received;
+
+          final progress = totalBytes > 0
+              ? (currentBytes / totalBytes).clamp(0.0, 1.0)
+              : 0.0;
+
+          await _downloadRepository.updateProgress(
+            taskId,
+            progress,
+            currentBytes,
+            totalBytes,
+          );
+        }
+      } finally {
+        await sink.close();
+      }
+
+      /*
+     * If the download was paused/cancelled while reading the stream,
+     * don't mark it as completed.
+     */
+      if (cancelToken.isCancelled) {
+        if (_pauseRequested.contains(taskId)) {
+          await _downloadRepository.updateStatus(taskId, DownloadStatus.paused);
+        } else {
+          await _downloadRepository.updateStatus(
+            taskId,
+            DownloadStatus.cancelled,
+          );
+        }
+
+        return;
+      }
+
+      /*
+     * Validate Instagram downloads.
+     */
       if (provider is InstagramSourceProvider) {
         await _validateInstagramVideoDownload(
           targetPath,
-          contentType: downloadResponse.headers.value(Headers.contentTypeHeader),
+          contentType: response.headers.value(Headers.contentTypeHeader),
         );
       }
 
-      // Mark task as completed
-      await _downloadRepository.updateStatus(taskId, DownloadStatus.completed);
-      await _downloadRepository.updateProgress(taskId, 1.0, 0, 0);
+      /*
+     * Download completed successfully.
+     */
+      await _downloadRepository.updateProgress(
+        taskId,
+        1.0,
+        totalBytes,
+        totalBytes,
+      );
 
-      // Auto-ingest downloaded file into SQLite Media Library asynchronously & lightweight
+      await _downloadRepository.updateStatus(taskId, DownloadStatus.completed);
+
+      // Add downloaded media to library.
       unawaited(_mediaRepository.scanSingleFile(targetPath));
     } on DioException catch (e) {
       if (CancelToken.isCancel(e)) {
-        await _downloadRepository.updateStatus(taskId, DownloadStatus.cancelled);
-      } else {
-        final isInstagram = provider is InstagramSourceProvider;
-        await _downloadRepository.updateStatus(
-          taskId,
-          DownloadStatus.failed,
-          errorMessage: isInstagram
-              ? 'Instagram did not provide a downloadable public video. Check that the Reel or post is public, then try again.'
-              : 'Unable to connect to source. Please check your internet connection or URL.',
-        );
+        if (_pauseRequested.contains(taskId)) {
+          await _downloadRepository.updateStatus(taskId, DownloadStatus.paused);
+        } else {
+          await _downloadRepository.updateStatus(
+            taskId,
+            DownloadStatus.cancelled,
+          );
+        }
+
+        return;
       }
+
+      final isInstagram = provider is InstagramSourceProvider;
+
+      await _downloadRepository.updateStatus(
+        taskId,
+        DownloadStatus.failed,
+        errorMessage: isInstagram
+            ? 'Instagram did not provide a downloadable public video. '
+                  'Check that the Reel or post is public, then try again.'
+            : 'Unable to connect to source. '
+                  'Please check your internet connection or URL.',
+      );
     } catch (e) {
       var msg = e.toString().replaceFirst(RegExp(r'^Exception:\s*'), '').trim();
+
       if (msg.contains('DioException') || msg.contains('validateStatus')) {
-        msg = 'Unable to resolve video stream from this link. Make sure the post is public.';
+        msg =
+            'Unable to resolve video stream from this link. '
+            'Make sure the post is public.';
       }
+
       await _downloadRepository.updateStatus(
         taskId,
         DownloadStatus.failed,
@@ -263,6 +417,7 @@ class DownloadManager {
       );
     } finally {
       _cancelTokens.remove(taskId);
+      _pauseRequested.remove(taskId);
     }
   }
 
@@ -281,26 +436,32 @@ class DownloadManager {
       'file size $fileSize bytes.',
     );
 
-    final isNonVideoResponse = normalizedContentType != null &&
+    final isNonVideoResponse =
+        normalizedContentType != null &&
         normalizedContentType.isNotEmpty &&
         !normalizedContentType.startsWith('video/') &&
         !normalizedContentType.startsWith('application/octet-stream');
     if (isNonVideoResponse || fileSize < 1024) {
       await _removeInvalidDownload(file);
-      throw Exception('Instagram returned an invalid video response. Please retry the download.');
+      throw Exception(
+        'Instagram returned an invalid video response. Please retry the download.',
+      );
     }
 
     final handle = await file.open();
     try {
       final header = await handle.read(12);
-      final hasMp4Header = header.length >= 8 &&
+      final hasMp4Header =
+          header.length >= 8 &&
           header[4] == 0x66 && // f
           header[5] == 0x74 && // t
           header[6] == 0x79 && // y
           header[7] == 0x70; // p
       if (!hasMp4Header) {
         await _removeInvalidDownload(file);
-        throw Exception('Instagram returned a file that is not a playable MP4 video.');
+        throw Exception(
+          'Instagram returned a file that is not a playable MP4 video.',
+        );
       }
     } finally {
       await handle.close();
@@ -317,10 +478,15 @@ class DownloadManager {
 
   /// Cancel an active download task
   Future<void> cancelDownload(String taskId) async {
+    _pauseRequested.remove(taskId);
+
     final token = _cancelTokens[taskId];
+
     if (token != null && !token.isCancelled) {
       token.cancel('User cancelled download');
+      return;
     }
+
     await _downloadRepository.updateStatus(taskId, DownloadStatus.cancelled);
   }
 
@@ -341,46 +507,87 @@ class DownloadManager {
 
   /// Pause an active download task
   Future<void> pauseDownload(String taskId) async {
+    final task = await _downloadRepository.getTaskById(taskId);
+
+    if (task == null) return;
+
+    if (task.status != DownloadStatus.downloading &&
+        task.status != DownloadStatus.resolving) {
+      return;
+    }
+
+    _pauseRequested.add(taskId);
+
     final token = _cancelTokens[taskId];
+
     if (token != null && !token.isCancelled) {
       token.cancel('Pause');
     }
-    await _downloadRepository.updateStatus(taskId, DownloadStatus.paused);
   }
 
   /// Resume a paused download task
   Future<void> resumeDownload(String taskId) async {
     final task = await _downloadRepository.getTaskById(taskId);
-    if (task == null || task.status != DownloadStatus.paused) return;
 
-    // Reset retry count on manual resume
-    await _downloadRepository.saveTask(
-      task.copyWith(status: DownloadStatus.queued, retryCount: 0),
+    if (task == null || task.status != DownloadStatus.paused) {
+      return;
+    }
+
+    // Remove old pause request before starting again.
+    _pauseRequested.remove(taskId);
+
+    final uri = Uri.parse(task.url);
+
+    final provider = _providers.firstWhere(
+      (p) => p.canHandle(uri),
+      orElse: () => DirectMediaSourceProvider(),
     );
 
-    // Re-execute the download
-    _executeDownloadTask(
-      taskId,
-      Uri.parse(task.url),
-      _providers.firstWhere(
-        (p) => p.canHandle(Uri.parse(task.url)),
-        orElse: () => DirectMediaSourceProvider(),
+    await _downloadRepository.saveTask(
+      task.copyWith(
+        status: DownloadStatus.queued,
+        retryCount: 0,
+        errorMessage: null,
       ),
-      File(task.destinationPath).parent.path,
+    );
+
+    /*
+   * IMPORTANT:
+   * Use the SAME destinationPath.
+   * _executeDownloadTask() will detect the existing file
+   * and continue from its current byte count.
+   */
+    unawaited(
+      _executeDownloadTask(
+        taskId,
+        uri,
+        provider,
+        File(task.destinationPath).parent.path,
+        customTitle: task.title,
+      ),
     );
   }
 
   /// Retry a failed download with exponential backoff
   Future<void> retryDownload(String taskId) async {
     final task = await _downloadRepository.getTaskById(taskId);
+
     if (task == null || !task.isFailed) return;
 
     final canRetry = task.retryCount < task.maxRetries;
+
     if (!canRetry) return;
 
-    // Exponential backoff: 2^retryCount seconds (1, 2, 4, 8...)
     final delaySeconds = 1 << task.retryCount;
+
     await Future.delayed(Duration(seconds: delaySeconds));
+
+    final uri = Uri.parse(task.url);
+
+    final provider = _providers.firstWhere(
+      (p) => p.canHandle(uri),
+      orElse: () => DirectMediaSourceProvider(),
+    );
 
     await _downloadRepository.saveTask(
       task.copyWith(
@@ -390,26 +597,29 @@ class DownloadManager {
       ),
     );
 
-    _executeDownloadTask(
-      taskId,
-      Uri.parse(task.url),
-      _providers.firstWhere(
-        (p) => p.canHandle(Uri.parse(task.url)),
-        orElse: () => DirectMediaSourceProvider(),
+    unawaited(
+      _executeDownloadTask(
+        taskId,
+        uri,
+        provider,
+        File(task.destinationPath).parent.path,
+        customTitle: task.title,
       ),
-      File(task.destinationPath).parent.path,
     );
   }
 
   /// Generates a unique, non-overwriting destination file path and display title.
   /// If a file with the same title exists on disk, it appends an incremental index:
   /// e.g. "My Video.mp4" -> "My Video (1).mp4" -> "My Video (2).mp4".
-  static ({String targetPath, String uniqueTitle}) generateUniqueDestinationPathAndTitle(
+  static ({String targetPath, String uniqueTitle})
+  generateUniqueDestinationPathAndTitle(
     String downloadFolder,
     String rawTitle,
     String fileExtension,
   ) {
-    final ext = fileExtension.startsWith('.') ? fileExtension : '.$fileExtension';
+    final ext = fileExtension.startsWith('.')
+        ? fileExtension
+        : '.$fileExtension';
     final baseTitle = sanitizeFilename(rawTitle, '');
 
     var candidateTitle = baseTitle;
