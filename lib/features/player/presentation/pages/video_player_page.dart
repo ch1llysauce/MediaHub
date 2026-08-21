@@ -452,13 +452,19 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
     ref.listen<MusicPlayerState>(musicPlayerControllerProvider, (previous, next) {
       final newItem = next.activeItem;
       if (newItem == null || newItem.mediaType == 'audio') {
-        if (mounted && Navigator.of(context).canPop()) {
-          Navigator.of(context).pop();
-        }
-      } else if (newItem.id != _currentItem.id) {
+        return;
+      }
+
+      if (newItem.id != _currentItem.id) {
         setState(() {
           _currentItem = newItem;
           _isUpNextDismissed = false;
+
+          _currentIndex = _playlist.indexWhere((item) => item.id == newItem.id);
+
+          if(_currentIndex < 0){
+            _currentIndex = 0;
+          }
         });
         _playCurrentMedia();
       }

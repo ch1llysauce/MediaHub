@@ -3,9 +3,11 @@ import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:audio_service/audio_service.dart' as audio_service;
 
 import '../../../../core/providers/providers.dart';
 import '../../../../core/services/audio_player_service.dart';
+import '../../../../core/services/mediahub_audio_handler.dart';
 import '../../../../domain/entities/media_item_entity.dart';
 import '../../../../domain/repositories/history_repository.dart';
 import '../../../../domain/repositories/media_repository.dart';
@@ -84,19 +86,22 @@ class MusicPlayerState {
 
 class MusicPlayerController extends StateNotifier<MusicPlayerState> {
   final AudioPlayerService _audioService;
+  final MediaHubAudioHandler? _audioHandler;
   final PlaylistRepository? _playlistRepository;
   final HistoryRepository? _historyRepository;
   final MediaRepository? _mediaRepository;
   StreamSubscription<PlayerState>? _playerStateSub;
-  StreamSubscription<Duration>? _positionSub;
-  StreamSubscription<Duration?>? _durationSub;
-  StreamSubscription<List<MediaItemEntity>>? _playlistSub;
+StreamSubscription<Duration>? _positionSub;
+StreamSubscription<Duration?>? _durationSub;
+StreamSubscription<List<MediaItemEntity>>? _playlistSub;
 
   MusicPlayerController(
-    this._audioService, [
+    this._audioService,
+    [
     this._playlistRepository,
     this._historyRepository,
     this._mediaRepository,
+    this._audioHandler,
   ]) : super(const MusicPlayerState()) {
     _listenToStreams();
   }
@@ -312,6 +317,24 @@ class MusicPlayerController extends StateNotifier<MusicPlayerState> {
 
     if (item.mediaType == 'audio') {
       try {
+        if (_audioHandler != null) {
+      await _audioHandler!.setMedia(
+        path: item.path,
+        item: audio_service.MediaItem(
+          id: item.id,
+          title: item.title,
+          artist: item.artist ?? 'Unknown Artist',
+          album: item.album,
+          duration: item.duration != null
+              ? Duration(seconds: item.duration!)
+              : null,
+          artUri: item.artworkPath != null
+              ? Uri.file(item.artworkPath!)
+              : null,
+        ),
+      );
+    }
+
         await _audioService.setFilePath(item.path);
         await _audioService.seek(Duration.zero);
         await _audioService.play();
@@ -493,8 +516,16 @@ class MusicPlayerController extends StateNotifier<MusicPlayerState> {
 final musicPlayerControllerProvider =
     StateNotifierProvider<MusicPlayerController, MusicPlayerState>((ref) {
   final audioService = ref.watch(audioPlayerServiceProvider);
+  final audioHandler = ref.watch(audioHandlerProvider);
   final playlistRepo = ref.watch(playlistRepositoryProvider);
   final historyRepo = ref.watch(historyRepositoryProvider);
   final mediaRepo = ref.watch(mediaRepositoryProvider);
-  return MusicPlayerController(audioService, playlistRepo, historyRepo, mediaRepo);
+  
+  return MusicPlayerController(
+    audioService,
+    playlistRepo,
+    historyRepo,
+    mediaRepo,
+    audioHandler,
+  );
 });

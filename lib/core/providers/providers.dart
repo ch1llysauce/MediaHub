@@ -17,6 +17,7 @@ import '../../domain/repositories/playlist_repository.dart';
 import '../services/audio_player_service.dart';
 import '../services/downloader/download_manager.dart';
 import '../services/media_scanner_service.dart';
+import '../services/mediahub_audio_handler.dart';
 
 /// Database singleton provider
 final appDatabaseProvider = Provider<AppDatabase>((ref) {
@@ -139,3 +140,19 @@ final playlistItemsStreamProvider =
   final repository = ref.watch(playlistRepositoryProvider);
   return repository.watchPlaylistItems(playlistId);
 });
+
+/// Reactive stream of music outside the app
+final audioHandlerProvider = Provider<MediaHubAudioHandler>((ref) {
+  final audioPlayerService = ref.watch(audioPlayerServiceProvider);
+
+  final handler = MediaHubAudioHandler(
+    audioPlayerService,
+  );
+
+  ref.onDispose(() {
+    handler.disposeHandler();
+  });
+
+  return handler;
+});
+
