@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../domain/entities/download_task_entity.dart';
 import '../../../domain/repositories/download_repository.dart';
@@ -44,8 +45,22 @@ class DownloadManager {
     return '$safeName$ext';
   }
 
-  /// Get the app's designated download folder path
+  /// Get the app's designated download folder path.
+  /// Respects a user-configured directory from Settings when present.
   Future<String> getDownloadDirectory() async {
+    final userConfigured = await _getConfiguredDownloadDirectory();
+    if (userConfigured != null && userConfigured.isNotEmpty) {
+      try {
+        final dir = Directory(userConfigured);
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+        return userConfigured;
+      } catch (_) {
+        // Fall back to default if the configured path can't be created
+      }
+    }
+
     if (Platform.isAndroid) {
       final publicDownloadDir = Directory('/storage/emulated/0/Download/MediaHub');
       try {
@@ -62,6 +77,16 @@ class DownloadManager {
       await downloadDir.create(recursive: true);
     }
     return downloadDir.path;
+  }
+
+  Future<String?> _getConfiguredDownloadDirectory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString('settings.downloadDirectory');
+      return (saved != null && saved.isNotEmpty) ? saved : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Resolve media info (thumbnail, title, streams, qualities) before downloading

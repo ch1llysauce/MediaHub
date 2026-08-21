@@ -11,6 +11,7 @@ abstract class MediaRepository {
   Future<void> scanDirectories(List<String> directoryPaths);
   Future<void> scanSingleFile(String filePath);
   Future<List<ScanDirectoryEntity>> getScanDirectories();
+  Stream<List<ScanDirectoryEntity>> watchScanDirectories();
   Future<void> addScanDirectory(String path);
   Future<void> removeScanDirectory(String id);
   Future<void> updateMediaDuration(String id, int durationInSeconds);

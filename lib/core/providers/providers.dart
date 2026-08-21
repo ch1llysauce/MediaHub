@@ -10,6 +10,7 @@ import '../../data/repositories/media_repository_impl.dart';
 import '../../data/repositories/playlist_repository_impl.dart';
 import '../../domain/entities/download_task_entity.dart';
 import '../../domain/entities/media_item_entity.dart';
+import '../../domain/entities/scan_directory_entity.dart';
 import '../../domain/repositories/download_repository.dart';
 import '../../domain/repositories/media_repository.dart';
 import '../../domain/repositories/playlist_repository.dart';
@@ -123,6 +124,13 @@ final videoMediaStreamProvider = StreamProvider<List<MediaItemEntity>>((ref) {
 final allPlaylistsStreamProvider = StreamProvider((ref) {
   final repository = ref.watch(playlistRepositoryProvider);
   return repository.watchAllPlaylists();
+});
+
+/// Reactive stream of user-configured scan directories
+final scanDirectoriesStreamProvider =
+    StreamProvider<List<ScanDirectoryEntity>>((ref) {
+  final repository = ref.watch(mediaRepositoryProvider);
+  return repository.watchScanDirectories();
 });
 
 /// Reactive stream of media items in a specific playlist

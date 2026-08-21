@@ -57,6 +57,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
   int _seekAccumulatedSeconds = 0;
   Timer? _controlsTimer;
   Timer? _seekOverlayTimer;
+  bool _hasResetforPrevious = false;
 
   static const Duration _autoHideDuration = Duration(seconds: 3, milliseconds: 500);
 
@@ -262,17 +263,35 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
     return ref.read(musicPlayerControllerProvider.notifier).peekNextItem();
   }
 
-  void _skipToNext() {
+  Future<void> _skipToNext() async {
     _resetControlsTimer();
+
+    try {
+      await _player.pause();
+      await _player.stop();
+    } catch (_) {}
+
+    if (!mounted) return;
+
     ref.read(musicPlayerControllerProvider.notifier).skipToNext();
   }
 
-  void _skipToPrevious() {
+  Future<void> _skipToPrevious() async {
     _resetControlsTimer();
-    if (_position.inSeconds > 3) {
-      _player.seek(Duration.zero);
+    if (!_hasResetforPrevious && _position.inSeconds > 3) {
+      await _player.seek(Duration.zero);
+      if (mounted) {
+        setState(() {
+          _hasResetforPrevious = true;
+        });
+      }
       return;
     }
+    try {
+      await _player.stop();
+    } catch (_) {}
+
+    if (!mounted) return;
     ref.read(musicPlayerControllerProvider.notifier).skipToPrevious();
   }
 

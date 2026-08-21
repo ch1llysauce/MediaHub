@@ -172,6 +172,13 @@ class MediaRepositoryImpl implements MediaRepository {
   }
 
   @override
+  Stream<List<ScanDirectoryEntity>> watchScanDirectories() {
+    return _scanDirectoriesDao.watchAllDirectories().map(
+          (rows) => rows.map(_dirRowToEntity).toList(),
+        );
+  }
+
+  @override
   Future<void> addScanDirectory(String path) async {
     final id = path.hashCode.abs().toString();
     final companion = ScanDirectoriesCompanion.insert(
