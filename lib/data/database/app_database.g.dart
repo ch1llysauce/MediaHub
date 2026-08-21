@@ -2330,6 +2330,30 @@ class $DownloadTasksTable extends DownloadTasks
     type: DriftSqlType.dateTime,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _retryCountMeta = const VerificationMeta(
+    'retryCount',
+  );
+  @override
+  late final GeneratedColumn<int> retryCount = GeneratedColumn<int>(
+    'retry_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _maxRetriesMeta = const VerificationMeta(
+    'maxRetries',
+  );
+  @override
+  late final GeneratedColumn<int> maxRetries = GeneratedColumn<int>(
+    'max_retries',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(3),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -2341,6 +2365,8 @@ class $DownloadTasksTable extends DownloadTasks
     totalBytes,
     errorMessage,
     createdAt,
+    retryCount,
+    maxRetries,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2424,6 +2450,18 @@ class $DownloadTasksTable extends DownloadTasks
     } else if (isInserting) {
       context.missing(_createdAtMeta);
     }
+    if (data.containsKey('retry_count')) {
+      context.handle(
+        _retryCountMeta,
+        retryCount.isAcceptableOrUnknown(data['retry_count']!, _retryCountMeta),
+      );
+    }
+    if (data.containsKey('max_retries')) {
+      context.handle(
+        _maxRetriesMeta,
+        maxRetries.isAcceptableOrUnknown(data['max_retries']!, _maxRetriesMeta),
+      );
+    }
     return context;
   }
 
@@ -2469,6 +2507,14 @@ class $DownloadTasksTable extends DownloadTasks
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
       )!,
+      retryCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}retry_count'],
+      )!,
+      maxRetries: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}max_retries'],
+      )!,
     );
   }
 
@@ -2488,6 +2534,8 @@ class DownloadTaskRow extends DataClass implements Insertable<DownloadTaskRow> {
   final int totalBytes;
   final String? errorMessage;
   final DateTime createdAt;
+  final int retryCount;
+  final int maxRetries;
   const DownloadTaskRow({
     required this.id,
     required this.url,
@@ -2498,6 +2546,8 @@ class DownloadTaskRow extends DataClass implements Insertable<DownloadTaskRow> {
     required this.totalBytes,
     this.errorMessage,
     required this.createdAt,
+    required this.retryCount,
+    required this.maxRetries,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -2513,6 +2563,8 @@ class DownloadTaskRow extends DataClass implements Insertable<DownloadTaskRow> {
       map['error_message'] = Variable<String>(errorMessage);
     }
     map['created_at'] = Variable<DateTime>(createdAt);
+    map['retry_count'] = Variable<int>(retryCount);
+    map['max_retries'] = Variable<int>(maxRetries);
     return map;
   }
 
@@ -2529,6 +2581,8 @@ class DownloadTaskRow extends DataClass implements Insertable<DownloadTaskRow> {
           ? const Value.absent()
           : Value(errorMessage),
       createdAt: Value(createdAt),
+      retryCount: Value(retryCount),
+      maxRetries: Value(maxRetries),
     );
   }
 
@@ -2547,6 +2601,8 @@ class DownloadTaskRow extends DataClass implements Insertable<DownloadTaskRow> {
       totalBytes: serializer.fromJson<int>(json['totalBytes']),
       errorMessage: serializer.fromJson<String?>(json['errorMessage']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      retryCount: serializer.fromJson<int>(json['retryCount']),
+      maxRetries: serializer.fromJson<int>(json['maxRetries']),
     );
   }
   @override
@@ -2562,6 +2618,8 @@ class DownloadTaskRow extends DataClass implements Insertable<DownloadTaskRow> {
       'totalBytes': serializer.toJson<int>(totalBytes),
       'errorMessage': serializer.toJson<String?>(errorMessage),
       'createdAt': serializer.toJson<DateTime>(createdAt),
+      'retryCount': serializer.toJson<int>(retryCount),
+      'maxRetries': serializer.toJson<int>(maxRetries),
     };
   }
 
@@ -2575,6 +2633,8 @@ class DownloadTaskRow extends DataClass implements Insertable<DownloadTaskRow> {
     int? totalBytes,
     Value<String?> errorMessage = const Value.absent(),
     DateTime? createdAt,
+    int? retryCount,
+    int? maxRetries,
   }) => DownloadTaskRow(
     id: id ?? this.id,
     url: url ?? this.url,
@@ -2585,6 +2645,8 @@ class DownloadTaskRow extends DataClass implements Insertable<DownloadTaskRow> {
     totalBytes: totalBytes ?? this.totalBytes,
     errorMessage: errorMessage.present ? errorMessage.value : this.errorMessage,
     createdAt: createdAt ?? this.createdAt,
+    retryCount: retryCount ?? this.retryCount,
+    maxRetries: maxRetries ?? this.maxRetries,
   );
   DownloadTaskRow copyWithCompanion(DownloadTasksCompanion data) {
     return DownloadTaskRow(
@@ -2605,6 +2667,12 @@ class DownloadTaskRow extends DataClass implements Insertable<DownloadTaskRow> {
           ? data.errorMessage.value
           : this.errorMessage,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      retryCount: data.retryCount.present
+          ? data.retryCount.value
+          : this.retryCount,
+      maxRetries: data.maxRetries.present
+          ? data.maxRetries.value
+          : this.maxRetries,
     );
   }
 
@@ -2619,7 +2687,9 @@ class DownloadTaskRow extends DataClass implements Insertable<DownloadTaskRow> {
           ..write('bytesDownloaded: $bytesDownloaded, ')
           ..write('totalBytes: $totalBytes, ')
           ..write('errorMessage: $errorMessage, ')
-          ..write('createdAt: $createdAt')
+          ..write('createdAt: $createdAt, ')
+          ..write('retryCount: $retryCount, ')
+          ..write('maxRetries: $maxRetries')
           ..write(')'))
         .toString();
   }
@@ -2635,6 +2705,8 @@ class DownloadTaskRow extends DataClass implements Insertable<DownloadTaskRow> {
     totalBytes,
     errorMessage,
     createdAt,
+    retryCount,
+    maxRetries,
   );
   @override
   bool operator ==(Object other) =>
@@ -2648,7 +2720,9 @@ class DownloadTaskRow extends DataClass implements Insertable<DownloadTaskRow> {
           other.bytesDownloaded == this.bytesDownloaded &&
           other.totalBytes == this.totalBytes &&
           other.errorMessage == this.errorMessage &&
-          other.createdAt == this.createdAt);
+          other.createdAt == this.createdAt &&
+          other.retryCount == this.retryCount &&
+          other.maxRetries == this.maxRetries);
 }
 
 class DownloadTasksCompanion extends UpdateCompanion<DownloadTaskRow> {
@@ -2661,6 +2735,8 @@ class DownloadTasksCompanion extends UpdateCompanion<DownloadTaskRow> {
   final Value<int> totalBytes;
   final Value<String?> errorMessage;
   final Value<DateTime> createdAt;
+  final Value<int> retryCount;
+  final Value<int> maxRetries;
   final Value<int> rowid;
   const DownloadTasksCompanion({
     this.id = const Value.absent(),
@@ -2672,6 +2748,8 @@ class DownloadTasksCompanion extends UpdateCompanion<DownloadTaskRow> {
     this.totalBytes = const Value.absent(),
     this.errorMessage = const Value.absent(),
     this.createdAt = const Value.absent(),
+    this.retryCount = const Value.absent(),
+    this.maxRetries = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   DownloadTasksCompanion.insert({
@@ -2684,6 +2762,8 @@ class DownloadTasksCompanion extends UpdateCompanion<DownloadTaskRow> {
     this.totalBytes = const Value.absent(),
     this.errorMessage = const Value.absent(),
     required DateTime createdAt,
+    this.retryCount = const Value.absent(),
+    this.maxRetries = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : id = Value(id),
        url = Value(url),
@@ -2700,6 +2780,8 @@ class DownloadTasksCompanion extends UpdateCompanion<DownloadTaskRow> {
     Expression<int>? totalBytes,
     Expression<String>? errorMessage,
     Expression<DateTime>? createdAt,
+    Expression<int>? retryCount,
+    Expression<int>? maxRetries,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -2712,6 +2794,8 @@ class DownloadTasksCompanion extends UpdateCompanion<DownloadTaskRow> {
       if (totalBytes != null) 'total_bytes': totalBytes,
       if (errorMessage != null) 'error_message': errorMessage,
       if (createdAt != null) 'created_at': createdAt,
+      if (retryCount != null) 'retry_count': retryCount,
+      if (maxRetries != null) 'max_retries': maxRetries,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -2726,6 +2810,8 @@ class DownloadTasksCompanion extends UpdateCompanion<DownloadTaskRow> {
     Value<int>? totalBytes,
     Value<String?>? errorMessage,
     Value<DateTime>? createdAt,
+    Value<int>? retryCount,
+    Value<int>? maxRetries,
     Value<int>? rowid,
   }) {
     return DownloadTasksCompanion(
@@ -2738,6 +2824,8 @@ class DownloadTasksCompanion extends UpdateCompanion<DownloadTaskRow> {
       totalBytes: totalBytes ?? this.totalBytes,
       errorMessage: errorMessage ?? this.errorMessage,
       createdAt: createdAt ?? this.createdAt,
+      retryCount: retryCount ?? this.retryCount,
+      maxRetries: maxRetries ?? this.maxRetries,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -2772,6 +2860,12 @@ class DownloadTasksCompanion extends UpdateCompanion<DownloadTaskRow> {
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
+    if (retryCount.present) {
+      map['retry_count'] = Variable<int>(retryCount.value);
+    }
+    if (maxRetries.present) {
+      map['max_retries'] = Variable<int>(maxRetries.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -2790,6 +2884,8 @@ class DownloadTasksCompanion extends UpdateCompanion<DownloadTaskRow> {
           ..write('totalBytes: $totalBytes, ')
           ..write('errorMessage: $errorMessage, ')
           ..write('createdAt: $createdAt, ')
+          ..write('retryCount: $retryCount, ')
+          ..write('maxRetries: $maxRetries, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -4076,6 +4172,8 @@ typedef $$DownloadTasksTableCreateCompanionBuilder =
       Value<int> totalBytes,
       Value<String?> errorMessage,
       required DateTime createdAt,
+      Value<int> retryCount,
+      Value<int> maxRetries,
       Value<int> rowid,
     });
 typedef $$DownloadTasksTableUpdateCompanionBuilder =
@@ -4089,6 +4187,8 @@ typedef $$DownloadTasksTableUpdateCompanionBuilder =
       Value<int> totalBytes,
       Value<String?> errorMessage,
       Value<DateTime> createdAt,
+      Value<int> retryCount,
+      Value<int> maxRetries,
       Value<int> rowid,
     });
 
@@ -4143,6 +4243,16 @@ class $$DownloadTasksTableFilterComposer
 
   ColumnFilters<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get retryCount => $composableBuilder(
+    column: $table.retryCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get maxRetries => $composableBuilder(
+    column: $table.maxRetries,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -4200,6 +4310,16 @@ class $$DownloadTasksTableOrderingComposer
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<int> get retryCount => $composableBuilder(
+    column: $table.retryCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get maxRetries => $composableBuilder(
+    column: $table.maxRetries,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$DownloadTasksTableAnnotationComposer
@@ -4245,6 +4365,16 @@ class $$DownloadTasksTableAnnotationComposer
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<int> get retryCount => $composableBuilder(
+    column: $table.retryCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get maxRetries => $composableBuilder(
+    column: $table.maxRetries,
+    builder: (column) => column,
+  );
 }
 
 class $$DownloadTasksTableTableManager
@@ -4287,6 +4417,8 @@ class $$DownloadTasksTableTableManager
                 Value<int> totalBytes = const Value.absent(),
                 Value<String?> errorMessage = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
+                Value<int> retryCount = const Value.absent(),
+                Value<int> maxRetries = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => DownloadTasksCompanion(
                 id: id,
@@ -4298,6 +4430,8 @@ class $$DownloadTasksTableTableManager
                 totalBytes: totalBytes,
                 errorMessage: errorMessage,
                 createdAt: createdAt,
+                retryCount: retryCount,
+                maxRetries: maxRetries,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -4311,6 +4445,8 @@ class $$DownloadTasksTableTableManager
                 Value<int> totalBytes = const Value.absent(),
                 Value<String?> errorMessage = const Value.absent(),
                 required DateTime createdAt,
+                Value<int> retryCount = const Value.absent(),
+                Value<int> maxRetries = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => DownloadTasksCompanion.insert(
                 id: id,
@@ -4322,6 +4458,8 @@ class $$DownloadTasksTableTableManager
                 totalBytes: totalBytes,
                 errorMessage: errorMessage,
                 createdAt: createdAt,
+                retryCount: retryCount,
+                maxRetries: maxRetries,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

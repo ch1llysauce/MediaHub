@@ -84,6 +84,8 @@ class DownloadTasks extends Table {
   IntColumn get totalBytes => integer().withDefault(const Constant(0))();
   TextColumn get errorMessage => text().nullable()();
   DateTimeColumn get createdAt => dateTime()();
+  IntColumn get retryCount => integer().withDefault(const Constant(0))();
+  IntColumn get maxRetries => integer().withDefault(const Constant(3))();
 
   @override
   Set<Column> get primaryKey => {id};

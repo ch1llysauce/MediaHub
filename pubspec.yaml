@@ -48,6 +48,7 @@ dependencies:
   youtube_explode_dart: ^2.3.0
   html: ^0.15.4
   shared_preferences: ^2.2.2
+  file_picker: ^8.1.2
 
 dev_dependencies:
   flutter_test:

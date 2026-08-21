@@ -94,6 +94,21 @@ class DownloadsController extends StateNotifier<DownloadsControllerState> {
     await manager.cancelDownload(taskId);
   }
 
+  Future<void> pauseDownload(String taskId) async {
+    final manager = _ref.read(downloadManagerProvider);
+    await manager.pauseDownload(taskId);
+  }
+
+  Future<void> resumeDownload(String taskId) async {
+    final manager = _ref.read(downloadManagerProvider);
+    await manager.resumeDownload(taskId);
+  }
+
+  Future<void> retryDownload(String taskId) async {
+    final manager = _ref.read(downloadManagerProvider);
+    await manager.retryDownload(taskId);
+  }
+
   Future<void> deleteTask(String taskId) async {
     final manager = _ref.read(downloadManagerProvider);
     await manager.deleteTask(taskId);

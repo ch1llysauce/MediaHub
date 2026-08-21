@@ -20,6 +20,8 @@ class DownloadRepositoryImpl implements DownloadRepository {
       totalBytes: row.totalBytes,
       errorMessage: row.errorMessage,
       createdAt: row.createdAt,
+      retryCount: row.retryCount,
+      maxRetries: row.maxRetries,
     );
   }
 
@@ -54,6 +56,8 @@ class DownloadRepositoryImpl implements DownloadRepository {
       totalBytes: Value(task.totalBytes),
       errorMessage: Value(task.errorMessage),
       createdAt: Value(task.createdAt),
+      retryCount: Value(task.retryCount),
+      maxRetries: Value(task.maxRetries),
     );
     await _dao.upsertTask(companion);
   }

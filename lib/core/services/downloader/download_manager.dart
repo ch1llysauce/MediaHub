@@ -339,6 +339,68 @@ class DownloadManager {
     }
   }
 
+  /// Pause an active download task
+  Future<void> pauseDownload(String taskId) async {
+    final token = _cancelTokens[taskId];
+    if (token != null && !token.isCancelled) {
+      token.cancel('Pause');
+    }
+    await _downloadRepository.updateStatus(taskId, DownloadStatus.paused);
+  }
+
+  /// Resume a paused download task
+  Future<void> resumeDownload(String taskId) async {
+    final task = await _downloadRepository.getTaskById(taskId);
+    if (task == null || task.status != DownloadStatus.paused) return;
+
+    // Reset retry count on manual resume
+    await _downloadRepository.saveTask(
+      task.copyWith(status: DownloadStatus.queued, retryCount: 0),
+    );
+
+    // Re-execute the download
+    _executeDownloadTask(
+      taskId,
+      Uri.parse(task.url),
+      _providers.firstWhere(
+        (p) => p.canHandle(Uri.parse(task.url)),
+        orElse: () => DirectMediaSourceProvider(),
+      ),
+      File(task.destinationPath).parent.path,
+    );
+  }
+
+  /// Retry a failed download with exponential backoff
+  Future<void> retryDownload(String taskId) async {
+    final task = await _downloadRepository.getTaskById(taskId);
+    if (task == null || !task.isFailed) return;
+
+    final canRetry = task.retryCount < task.maxRetries;
+    if (!canRetry) return;
+
+    // Exponential backoff: 2^retryCount seconds (1, 2, 4, 8...)
+    final delaySeconds = 1 << task.retryCount;
+    await Future.delayed(Duration(seconds: delaySeconds));
+
+    await _downloadRepository.saveTask(
+      task.copyWith(
+        status: DownloadStatus.queued,
+        retryCount: task.retryCount + 1,
+        errorMessage: null,
+      ),
+    );
+
+    _executeDownloadTask(
+      taskId,
+      Uri.parse(task.url),
+      _providers.firstWhere(
+        (p) => p.canHandle(Uri.parse(task.url)),
+        orElse: () => DirectMediaSourceProvider(),
+      ),
+      File(task.destinationPath).parent.path,
+    );
+  }
+
   /// Generates a unique, non-overwriting destination file path and display title.
   /// If a file with the same title exists on disk, it appends an incremental index:
   /// e.g. "My Video.mp4" -> "My Video (1).mp4" -> "My Video (2).mp4".

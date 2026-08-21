@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
+import 'package:go_router/go_router.dart';
+import 'package:file_picker/file_picker.dart';
 import '../../../../core/providers/providers.dart';
-import '../../../../domain/entities/scan_directory_entity.dart';
 import '../../../library/presentation/controllers/library_controller.dart';
 import '../controllers/settings_controller.dart';
 
@@ -72,152 +72,30 @@ class SettingsPage extends ConsumerWidget {
     }
   }
 
-  Future<void> _showAddScanDirectory(
-    BuildContext context,
-    WidgetRef ref,
-  ) async {
-    final scannerService = ref.read(mediaScannerServiceProvider);
-    final defaults = scannerService.getDefaultScanDirectories();
-    final existingAsync = ref.read(scanDirectoriesStreamProvider.future);
+  Future<void> _pickFolder(
+  BuildContext context,
+  TextEditingController controller,
+) async {
+  final path = await FilePicker.platform.getDirectoryPath(
+    dialogTitle: 'Choose a folder to save downloads.',
+  );
 
-    final textController = TextEditingController();
-    FocusNode autofocusNode = FocusNode();
+  if (!context.mounted || path == null) return;
 
-    final result = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        final theme = Theme.of(dialogContext);
-        return AlertDialog(
-          title: const Text('Add Scan Directory'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Enter a folder path that MediaHub should scan for media.'),
-              const SizedBox(height: 12),
-              TextField(
-                controller: textController,
-                autofocus: true,
-                focusNode: autofocusNode,
-                decoration: InputDecoration(
-                  hintText: '/storage/emulated/0/Music',
-                  prefixIcon: const Icon(Icons.folder_outlined),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-                onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Default folders',
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: theme.colorScheme.primary,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 4),
-              SizedBox(
-                height: 140,
-                child: ListView(
-                  shrinkWrap: true,
-                  children: [
-                    for (final dir in defaults)
-                      ListTile(
-                        dense: true,
-                        contentPadding: EdgeInsets.zero,
-                        leading: const Icon(Icons.folder_rounded, size: 20),
-                        title: Text(
-                          dir,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall,
-                        ),
-                        trailing: const Icon(Icons.add_rounded, size: 20),
-                        onTap: () =>
-                            Navigator.pop(dialogContext, dir),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton.icon(
-              onPressed: () {
-                final path = textController.text.trim();
-                if (path.isNotEmpty) {
-                  Navigator.pop(dialogContext, path);
-                }
-              },
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('Add'),
-            ),
-          ],
-        );
-      },
+  controller
+    ..text = path
+    ..selection = TextSelection.collapsed(
+      offset: path.length,
     );
-
-    if (result == null || result.isEmpty) return;
-
-    // Guard against duplicates
-    final existing = await existingAsync;
-    final duplicate = existing.any(
-      (d) => d.path.toLowerCase() == result.toLowerCase(),
-    );
-
-    if (duplicate) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('That directory is already being scanned.')),
-        );
-      }
-      return;
-    }
-
-    await ref.read(mediaRepositoryProvider).addScanDirectory(result);
-  }
-
-  Future<void> _removeScanDirectory(BuildContext context, WidgetRef ref, ScanDirectoryEntity dir) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Remove Directory?'),
-        content: Text(
-          'Stop scanning "${dir.path}"?\n\nMedia already in your library will not be deleted.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(dialogContext).colorScheme.error,
-              foregroundColor: Theme.of(dialogContext).colorScheme.onError,
-            ),
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      await ref.read(mediaRepositoryProvider).removeScanDirectory(dir.id);
-    }
-  }
+}
 
   Future<void> _showDownloadDirectoryEditor(
     BuildContext context,
     WidgetRef ref,
   ) async {
     final settingsController = ref.read(settingsControllerProvider.notifier);
-    final currentPath = ref.read(settingsControllerProvider).downloadDirectory ?? '';
+    final currentPath =
+        ref.read(settingsControllerProvider).downloadDirectory ?? '';
 
     final textController = TextEditingController(text: currentPath);
 
@@ -241,13 +119,28 @@ class SettingsPage extends ConsumerWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+              onSubmitted: (value) =>
+                  Navigator.pop(dialogContext, value.trim()),
             ),
             const SizedBox(height: 12),
-            TextButton.icon(
-              onPressed: () => Navigator.pop(dialogContext, '__reset__'),
-              icon: const Icon(Icons.restart_alt_rounded, size: 18),
-              label: const Text('Reset to Default'),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => _pickFolder(context, textController),
+                icon: const Icon(Icons.folder_open_rounded),
+                label: const Text('Browse folders'),
+              ),
+            ),
+
+            const SizedBox(height: 8),
+
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => Navigator.pop(dialogContext, '__reset__'),
+                icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                label: const Text('Reset to Default'),
+              ),
             ),
           ],
         ),
@@ -288,16 +181,13 @@ class SettingsPage extends ConsumerWidget {
     final libraryState = ref.watch(libraryControllerProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-      ),
+      appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           // ─────────────────────────────────────────────
           // Appearance
           // ─────────────────────────────────────────────
-
           Text(
             'Appearance',
             style: theme.textTheme.titleMedium?.copyWith(
@@ -325,7 +215,6 @@ class SettingsPage extends ConsumerWidget {
           // ─────────────────────────────────────────────
           // Media Directories
           // ─────────────────────────────────────────────
-
           Text(
             'Media Directories',
             style: theme.textTheme.titleMedium?.copyWith(
@@ -351,47 +240,8 @@ class SettingsPage extends ConsumerWidget {
                 ),
               ),
               trailing: _SettingsChevron(colorScheme: colorScheme),
-              onTap: () => _showAddScanDirectory(context, ref),
+              onTap: () => context.pushNamed('scanDirectories'),
             ),
-          ),
-
-          // List of configured scan directories
-          scanDirsAsync.when(
-            data: (dirs) {
-              if (dirs.isEmpty) return const SizedBox.shrink();
-
-              return Card(
-                margin: const EdgeInsets.only(top: 8),
-                child: Column(
-                  children: [
-                    for (final dir in dirs)
-                      ListTile(
-                        dense: true,
-                        leading: Icon(
-                          Icons.folder_rounded,
-                          color: colorScheme.primary,
-                        ),
-                        title: Text(
-                          dir.path,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall,
-                        ),
-                        trailing: IconButton(
-                          icon: Icon(
-                            Icons.remove_circle_outline_rounded,
-                            color: colorScheme.error,
-                          ),
-                          tooltip: 'Remove directory',
-                          onPressed: () => _removeScanDirectory(context, ref, dir),
-                        ),
-                      ),
-                  ],
-                ),
-              );
-            },
-            loading: () => const SizedBox.shrink(),
-            error: (err, stack) => const SizedBox.shrink(),
           ),
 
           Card(
@@ -416,7 +266,6 @@ class SettingsPage extends ConsumerWidget {
           // ─────────────────────────────────────────────
           // Scanner
           // ─────────────────────────────────────────────
-
           Text(
             'Scanner',
             style: theme.textTheme.titleMedium?.copyWith(
@@ -451,8 +300,8 @@ class SettingsPage extends ConsumerWidget {
               onTap: libraryState.isScanning
                   ? null
                   : () => ref
-                      .read(libraryControllerProvider.notifier)
-                      .scanDeviceMedia(),
+                        .read(libraryControllerProvider.notifier)
+                        .scanDeviceMedia(),
             ),
           ),
 
@@ -461,7 +310,6 @@ class SettingsPage extends ConsumerWidget {
           // ─────────────────────────────────────────────
           // About
           // ─────────────────────────────────────────────
-
           Text(
             'About',
             style: theme.textTheme.titleMedium?.copyWith(
@@ -493,10 +341,7 @@ class _SettingsIcon extends StatelessWidget {
   final IconData icon;
   final ColorScheme colorScheme;
 
-  const _SettingsIcon({
-    required this.icon,
-    required this.colorScheme,
-  });
+  const _SettingsIcon({required this.icon, required this.colorScheme});
 
   @override
   Widget build(BuildContext context) {
@@ -506,11 +351,7 @@ class _SettingsIcon extends StatelessWidget {
         color: colorScheme.primary.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(12.0),
       ),
-      child: Icon(
-        icon,
-        color: colorScheme.primary,
-        size: 24,
-      ),
+      child: Icon(icon, color: colorScheme.primary, size: 24),
     );
   }
 }
@@ -519,9 +360,7 @@ class _SettingsIcon extends StatelessWidget {
 class _SettingsChevron extends StatelessWidget {
   final ColorScheme colorScheme;
 
-  const _SettingsChevron({
-    required this.colorScheme,
-  });
+  const _SettingsChevron({required this.colorScheme});
 
   @override
   Widget build(BuildContext context) {

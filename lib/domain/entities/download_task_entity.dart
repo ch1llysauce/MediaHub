@@ -43,6 +43,8 @@ class DownloadTaskEntity {
   final DateTime createdAt;
   final String? title;
   final String? mediaType;
+  final int retryCount;
+  final int maxRetries;
 
   const DownloadTaskEntity({
     required this.id,
@@ -56,6 +58,8 @@ class DownloadTaskEntity {
     required this.createdAt,
     this.title,
     this.mediaType,
+    this.retryCount = 0,
+    this.maxRetries = 3,
   });
 
   bool get isActive =>
@@ -79,6 +83,8 @@ class DownloadTaskEntity {
     DateTime? createdAt,
     String? title,
     String? mediaType,
+    int? retryCount,
+    int? maxRetries,
   }) {
     return DownloadTaskEntity(
       id: id ?? this.id,
@@ -92,6 +98,8 @@ class DownloadTaskEntity {
       createdAt: createdAt ?? this.createdAt,
       title: title ?? this.title,
       mediaType: mediaType ?? this.mediaType,
+      retryCount: retryCount ?? this.retryCount,
+      maxRetries: maxRetries ?? this.maxRetries,
     );
   }
 }

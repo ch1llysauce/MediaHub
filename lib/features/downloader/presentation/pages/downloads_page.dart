@@ -446,11 +446,32 @@ class _DownloadTaskTile extends ConsumerWidget {
                     ),
                   ),
                   if (task.isActive)
+                    task.isPaused
+                        ? IconButton(
+                            icon: const Icon(Icons.play_circle_outline),
+                            color: Colors.green,
+                            tooltip: 'Resume Download',
+                            onPressed: () => controller.resumeDownload(task.id),
+                          )
+                        : IconButton(
+                            icon: const Icon(Icons.pause_circle_outline),
+                            color: Colors.orange,
+                            tooltip: 'Pause Download',
+                            onPressed: () => controller.pauseDownload(task.id),
+                          ),
+                  if (task.isActive && !task.isPaused)
                     IconButton(
                       icon: const Icon(Icons.stop_circle_outlined),
                       color: Colors.red,
                       tooltip: 'Cancel Download',
                       onPressed: () => controller.cancelDownload(task.id),
+                    ),
+                  if (task.isFailed)
+                    IconButton(
+                      icon: const Icon(Icons.refresh_rounded),
+                      color: Colors.blue,
+                      tooltip: 'Retry Download',
+                      onPressed: () => controller.retryDownload(task.id),
                     ),
                   if (!task.isActive)
                     IconButton(

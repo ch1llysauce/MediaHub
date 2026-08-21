@@ -12,6 +12,7 @@ import '../features/playlists/presentation/pages/playlist_detail_page.dart';
 import '../features/playlists/presentation/pages/playlists_page.dart';
 import '../features/search/presentation/pages/search_page.dart';
 import '../features/settings/presentation/pages/settings_page.dart';
+import '../features/settings/presentation/pages/scan_directories_page.dart';
 import '../features/shell/presentation/pages/main_shell_page.dart';
 
 
@@ -95,6 +96,13 @@ final appRouter = GoRouter(
               path: '/settings',
               name: 'settings',
               builder: (context, state) => const SettingsPage(),
+              routes: [
+                GoRoute(
+                  path: 'scan-directories',
+                  name: 'scanDirectories',
+                  builder: (context, state) => const ScanDirectoriesPage(),
+                ),
+              ],
             ),
           ],
         ),
