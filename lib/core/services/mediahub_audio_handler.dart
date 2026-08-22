@@ -2,13 +2,11 @@ import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
-
 import 'audio_player_service.dart';
 
 class MediaHubAudioHandler extends BaseAudioHandler
     with QueueHandler, SeekHandler {
   final AudioPlayerService audioService;
-  final PlayerNotifier playerNotifier;
 
   StreamSubscription<PlayerState>? _playerStateSub;
   StreamSubscription<Duration>? _positionSub;
@@ -19,16 +17,6 @@ class MediaHubAudioHandler extends BaseAudioHandler
 
   MediaHubAudioHandler(this.audioService) {
     _init();
-  }
-
-@override
-  Future<void> skipToNext() async {
-    await playerNotifier.skipToNext();
-  }
-
-  @override
-  Future<void> skipToPrevious() async {
-    await playerNotifier.skipToPrevious();
   }
 
   void _init() {

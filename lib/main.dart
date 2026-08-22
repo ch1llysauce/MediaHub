@@ -14,10 +14,7 @@ Future<void> main() async {
   final container = ProviderContainer();
 
   await AudioService.init(
-    builder: () => MediaHubAudioHandler(
-      container.read(audioPlayerServiceProvider),
-      container.read(playerNotifierProvider.notifier),
-    ),
+    builder: () => container.read(audioHandlerProvider), 
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'com.example.mediahub.audio',
       androidNotificationChannelName: 'MediaHub',
