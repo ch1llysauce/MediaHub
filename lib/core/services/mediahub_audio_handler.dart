@@ -13,7 +13,11 @@ class MediaHubAudioHandler extends BaseAudioHandler
   StreamSubscription<PlayerState>? _playerStateSub;
   StreamSubscription<Duration>? _positionSub;
 
-  MediaHubAudioHandler(this.audioService, this.playerNotifier) {
+  Future<void> Function()? onSkipToNext;
+  Future<void> Function()? onSkipToPrevious;
+  Future<void> Function()? onStopPlayer;
+
+  MediaHubAudioHandler(this.audioService) {
     _init();
   }
 
@@ -48,6 +52,7 @@ class MediaHubAudioHandler extends BaseAudioHandler
               MediaControl.play,
               MediaControl.stop,
             MediaControl.skipToNext,
+            MediaControl.stop,
           ],
           androidCompactActionIndices: const [0, 1, 3],
           processingState: processingState,
@@ -96,8 +101,21 @@ class MediaHubAudioHandler extends BaseAudioHandler
   }
 
   @override
+  Future<void> skipToNext() async {
+    await onSkipToNext?.call();
+    await super.skipToNext();
+  }
+
+  @override
+  Future<void> skipToPrevious() async {
+    await onSkipToPrevious?.call();
+    await super.skipToPrevious();
+  }
+
+  @override
   Future<void> stop() async {
     await audioService.stop();
+    await onStopPlayer?.call();
     await super.stop();
   }
 
@@ -109,6 +127,7 @@ class MediaHubAudioHandler extends BaseAudioHandler
   @override
   Future<void> onTaskRemoved() async {
     await audioService.stop();
+    await onStopPlayer?.call();
     await super.onTaskRemoved();
   }
 
