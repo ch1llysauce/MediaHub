@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
-
 import 'audio_player_service.dart';
 
 class MediaHubAudioHandler extends BaseAudioHandler
@@ -40,9 +39,10 @@ class MediaHubAudioHandler extends BaseAudioHandler
               MediaControl.pause
             else
               MediaControl.play,
+              MediaControl.stop,
             MediaControl.skipToNext,
           ],
-          androidCompactActionIndices: const [1, 2, 3],
+          androidCompactActionIndices: const [0, 1, 3],
           processingState: processingState,
           playing: playerState.playing,
           updatePosition: audioService.player.position,
