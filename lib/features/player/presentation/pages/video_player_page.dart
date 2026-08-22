@@ -36,6 +36,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> with WidgetsB
   late final VideoController _videoController;
 
   final _floating = Floating();
+  static const _pipControlsChannel = MethodChannel('com.example.mediahub/pip_controls');
   bool _pipEligible = false;
 
   late MediaItemEntity _currentItem;
@@ -90,6 +91,17 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> with WidgetsB
   }
 });
 
+    _pipControlsChannel.setMethodCallHandler((call) async {
+  if (call.method == 'onPipAction') {
+    final action = call.arguments as String;
+    if (action == 'play') {
+      _player.play();
+    } else if (action == 'pause') {
+      _player.pause();
+    }
+  }
+});
+
     _currentItem = widget.item;
     _playlist = widget.playlist ?? [_currentItem];
     _currentIndex = _playlist.indexWhere((e) => e.id == _currentItem.id);
@@ -123,6 +135,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> with WidgetsB
     if (playing) {
       _armPipOnLeave();
     }
+    _updatePipActions(playing);
   }
     });
 
@@ -223,6 +236,14 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> with WidgetsB
 
   final status = await _floating.enable(OnLeavePiP());
   debugPrint('[PiP] Armed OnLeavePiP, status: $status');
+}
+
+  Future<void> _updatePipActions(bool isPlaying) async {
+  try {
+    await _pipControlsChannel.invokeMethod('updatePipActions', {'isPlaying': isPlaying});
+  } on PlatformException catch (e) {
+    debugPrint('[PiP] Failed to update actions: ${e.message}');
+  }
 }
 
   void _showPipPermissionDialog() {

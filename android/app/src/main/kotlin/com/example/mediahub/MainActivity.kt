@@ -1,19 +1,50 @@
 package com.example.mediahub
 
+import android.app.PendingIntent
+import android.app.PictureInPictureParams
+import android.app.RemoteAction
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.graphics.drawable.Icon
 import android.net.Uri
+import android.os.Build
+import android.os.Bundle
 import android.provider.Settings
+import androidx.annotation.RequiresApi
 import com.ryanheise.audioservice.AudioServiceActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : AudioServiceActivity() {
-    private val CHANNEL = "com.example.mediahub/pip_settings"
+    private val SETTINGS_CHANNEL = "com.example.mediahub/pip_settings"
+    private val CONTROLS_CHANNEL = "com.example.mediahub/pip_controls"
+
+    private var methodChannel: MethodChannel? = null
+
+    companion object {
+        const val ACTION_PIP_PLAY = "com.example.mediahub.PIP_PLAY"
+        const val ACTION_PIP_PAUSE = "com.example.mediahub.PIP_PAUSE"
+        const val REQUEST_PLAY = 1
+        const val REQUEST_PAUSE = 2
+    }
+
+    private val pipActionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            android.util.Log.d("PiP", "Received action: ${intent?.action}")
+            when (intent?.action) {
+                ACTION_PIP_PLAY -> methodChannel?.invokeMethod("onPipAction", "play")
+                ACTION_PIP_PAUSE -> methodChannel?.invokeMethod("onPipAction", "pause")
+            }
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+        // Existing: PiP settings opener
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SETTINGS_CHANNEL).setMethodCallHandler { call, result ->
             if (call.method == "openPipSettings") {
                 try {
                     val intent = Intent(
@@ -37,6 +68,89 @@ class MainActivity : AudioServiceActivity() {
             } else {
                 result.notImplemented()
             }
+        }
+
+        // BAGO: PiP play/pause controls
+        methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CONTROLS_CHANNEL)
+        methodChannel?.setMethodCallHandler { call, result ->
+            if (call.method == "updatePipActions") {
+                val playing = call.argument<Boolean>("isPlaying") ?: false
+                updatePipParams(playing)
+                result.success(true)
+            } else {
+                result.notImplemented()
+            }
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val filter = IntentFilter().apply {
+            addAction(ACTION_PIP_PLAY)
+            addAction(ACTION_PIP_PAUSE)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(pipActionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(pipActionReceiver, filter)
+        }
+    }
+
+    override fun onDestroy() {
+        try {
+            unregisterReceiver(pipActionReceiver)
+        } catch (e: Exception) {
+            // already unregistered, safe to ignore
+        }
+        super.onDestroy()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun updatePipParams(playing: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+            PendingIntent.FLAG_IMMUTABLE
+        else
+            0
+
+        val actions = mutableListOf<RemoteAction>()
+
+        if (playing) {
+            val pauseIntent = PendingIntent.getBroadcast(
+                this, REQUEST_PAUSE, Intent(ACTION_PIP_PAUSE).setPackage(packageName), flags
+            )
+            actions.add(
+                RemoteAction(
+                    Icon.createWithResource(this, android.R.drawable.ic_media_pause),
+                    "Pause",
+                    "Pause",
+                    pauseIntent
+                )
+            )
+        } else {
+            val playIntent = PendingIntent.getBroadcast(
+                this, REQUEST_PLAY, Intent(ACTION_PIP_PLAY).setPackage(packageName), flags
+            )
+            actions.add(
+                RemoteAction(
+                    Icon.createWithResource(this, android.R.drawable.ic_media_play),
+                    "Play",
+                    "Play",
+                    playIntent
+                )
+            )
+        }
+
+        val params = PictureInPictureParams.Builder()
+            .setActions(actions)
+            .build()
+
+        try {
+            setPictureInPictureParams(params)
+        } catch (e: Exception) {
+            // Activity might not be in a valid state yet — safe to ignore
         }
     }
 }
