@@ -34,15 +34,15 @@ class MediaHubAudioHandler extends BaseAudioHandler
       playbackState.add(
         PlaybackState(
           controls: [
+            MediaControl.stop,
             MediaControl.skipToPrevious,
             if (playerState.playing)
               MediaControl.pause
             else
               MediaControl.play,
             MediaControl.skipToNext,
-            MediaControl.stop,
           ],
-          androidCompactActionIndices: const [0, 1, 2],
+          androidCompactActionIndices: const [1, 2, 3],
           processingState: processingState,
           playing: playerState.playing,
           updatePosition: audioService.player.position,
