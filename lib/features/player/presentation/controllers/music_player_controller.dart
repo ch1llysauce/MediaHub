@@ -103,7 +103,16 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
     this._mediaRepository,
     this._audioHandler,
   ]) : super(const MusicPlayerState()) {
+    _setupAudioHandler();
     _listenToStreams();
+  }
+
+  void _setupAudioHandler() {
+    if (_audioHandler != null) {
+      _audioHandler.onSkipToNext = skipToNext;
+      _audioHandler.onSkipToPrevious = skipToPrevious;
+      _audioHandler.onStopPlayer = closePlayer;
+    }
   }
 
   bool _isUpNextDismissed = false;
