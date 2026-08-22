@@ -43,22 +43,21 @@ class UpNextBannerWidget extends StatelessWidget {
       ),
       child: Row(
         children: [
-          // Icon Artwork Container
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: isVideo
-                  ? Colors.amber.shade900.withValues(alpha: 0.2)
-                  : colorScheme.primaryContainer,
-              borderRadius: BorderRadius.circular(12.0),
+          if (onDismiss != null) ...[
+            const SizedBox(width: 4),
+            InkWell(
+              onTap: onDismiss,
+              borderRadius: BorderRadius.circular(20),
+              child: Padding(
+                padding: const EdgeInsets.all(4.0),
+                child: Icon(
+                  Icons.cancel_rounded,
+                  size: 24,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
             ),
-            child: Icon(
-              isVideo ? Icons.movie_rounded : Icons.music_note_rounded,
-              color: isVideo ? Colors.amber.shade400 : colorScheme.primary,
-              size: 26,
-            ),
-          ),
+          ],
           const SizedBox(width: 12),
           // Title, Artist, & Media Type Badge
           Expanded(
@@ -134,21 +133,6 @@ class UpNextBannerWidget extends StatelessWidget {
               ],
             ),
           ),
-          if (onDismiss != null) ...[
-            const SizedBox(width: 4),
-            InkWell(
-              onTap: onDismiss,
-              borderRadius: BorderRadius.circular(20),
-              child: Padding(
-                padding: const EdgeInsets.all(4.0),
-                child: Icon(
-                  Icons.close_rounded,
-                  size: 18,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ],
         ],
       ),
     );
