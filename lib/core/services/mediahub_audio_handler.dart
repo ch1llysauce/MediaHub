@@ -8,12 +8,23 @@ import 'audio_player_service.dart';
 class MediaHubAudioHandler extends BaseAudioHandler
     with QueueHandler, SeekHandler {
   final AudioPlayerService audioService;
+  final PlayerNotifier playerNotifier;
 
   StreamSubscription<PlayerState>? _playerStateSub;
   StreamSubscription<Duration>? _positionSub;
 
-  MediaHubAudioHandler(this.audioService) {
+  MediaHubAudioHandler(this.audioService, this.playerNotifier) {
     _init();
+  }
+
+@override
+  Future<void> skipToNext() async {
+    await playerNotifier.skipToNext();
+  }
+
+  @override
+  Future<void> skipToPrevious() async {
+    await playerNotifier.skipToPrevious();
   }
 
   void _init() {
@@ -35,9 +46,10 @@ class MediaHubAudioHandler extends BaseAudioHandler
               MediaControl.pause
             else
               MediaControl.play,
+              MediaControl.stop,
             MediaControl.skipToNext,
           ],
-          androidCompactActionIndices: const [0, 1, 2],
+          androidCompactActionIndices: const [0, 1, 3],
           processingState: processingState,
           playing: playerState.playing,
           updatePosition: audioService.player.position,
