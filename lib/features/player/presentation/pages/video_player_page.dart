@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:floating/floating.dart';
 
 import '../../../../core/providers/providers.dart';
 import '../../../../domain/entities/media_item_entity.dart';
@@ -30,9 +31,12 @@ class VideoPlayerPage extends ConsumerStatefulWidget {
   ConsumerState<VideoPlayerPage> createState() => _VideoPlayerPageState();
 }
 
-class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
+class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> with WidgetsBindingObserver {
   late final Player _player;
   late final VideoController _videoController;
+
+  final _floating = Floating();
+  bool _pipEligible = false;
 
   late MediaItemEntity _currentItem;
   late List<MediaItemEntity> _playlist;
@@ -59,12 +63,32 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
   Timer? _seekOverlayTimer;
   bool _hasResetforPrevious = false;
 
+  PiPStatus _pipStatus = PiPStatus.disabled;
+  StreamSubscription<PiPStatus>? _pipStatusSub;
+
   static const Duration _autoHideDuration = Duration(seconds: 3, milliseconds: 500);
 
+  static const _pipSettingsChannel = MethodChannel('com.example.mediahub/pip_settings');
+
+  Future<void> _openPipSettings() async {
+    try {
+      await _pipSettingsChannel.invokeMethod('openPipSettings');
+    } on PlatformException catch (e) {
+    debugPrint('[PiP Settings] Failed to open: ${e.message}');
+    }
+  }
+  
   @override
   void initState() {
     super.initState();
     VideoPlayerPage.isActive = true;
+    WidgetsBinding.instance.addObserver(this);
+
+    _pipStatusSub = _floating.pipStatusStream.listen((status) {
+  if (mounted) {
+    setState(() => _pipStatus = status);
+  }
+});
 
     _currentItem = widget.item;
     _playlist = widget.playlist ?? [_currentItem];
@@ -95,8 +119,11 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
 
     _player.stream.playing.listen((playing) {
       if (mounted) {
-        setState(() => _isPlaying = playing);
-      }
+    setState(() => _isPlaying = playing);
+    if (playing) {
+      _armPipOnLeave();
+    }
+  }
     });
 
     _player.stream.position.listen((pos) {
@@ -173,6 +200,55 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
       });
     }
   }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state){
+    debugPrint('[PiP] Lifecycle state: $state');
+  }
+
+  Future<void> _enterPipIfPossible() async {
+  final canEnter = await _floating.isPipAvailable;
+  if (!canEnter) return;
+
+  final result = await _floating.enable(ImmediatePiP());
+  debugPrint('[PiP] enter result: $result');
+  if (result == PiPStatus.unavailable && mounted) {
+    _showPipPermissionDialog();
+    }
+  }
+
+  Future<void> _armPipOnLeave() async {
+  final canEnter = await _floating.isPipAvailable;
+  if (!canEnter) return;
+
+  final status = await _floating.enable(OnLeavePiP());
+  debugPrint('[PiP] Armed OnLeavePiP, status: $status');
+}
+
+  void _showPipPermissionDialog() {
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Enable Picture-in-Picture'),
+      content: const Text(
+        'To play the video while using other apps, please enable Picture-in-Picture permission for MediaHub first.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () {
+            Navigator.pop(context);
+            _openPipSettings();
+          },
+          child: const Text('Open Settings'),
+        ),
+      ],
+    ),
+  );
+}
 
   void _onPointerDown(PointerDownEvent event) {
     _wasControlsVisibleOnPointerDown = _showControls;
@@ -355,6 +431,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
   Future<void> _onBackPressed() async {
     // If the video completed naturally, save position 0 so it restarts
     // next time instead of getting stuck at the last second.
+    await _floating.cancelOnLeavePiP();
     if (_isCompleted) {
       await ref.read(historyControllerProvider).recordPlayback(
         _currentItem.id,
@@ -388,9 +465,12 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
 
   @override
   void dispose() {
+    _floating.cancelOnLeavePiP();
     VideoPlayerPage.isActive = false;
+    WidgetsBinding.instance.removeObserver(this);
     _controlsTimer?.cancel();
     _seekOverlayTimer?.cancel();
+    _pipStatusSub?.cancel();
 
     // If the video completed naturally, ensure position stays at 0
     if (_isCompleted) {
@@ -583,10 +663,10 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
 
                 // Video Controls Overlay with Animated Opacity
                 AnimatedOpacity(
-                  opacity: _showControls ? 1.0 : 0.0,
+                  opacity: (_showControls && _pipStatus != PiPStatus.enabled) ? 1.0 : 0.0,
                   duration: const Duration(milliseconds: 300),
                   child: IgnorePointer(
-                    ignoring: !_showControls,
+                    ignoring:  !_showControls || _pipStatus == PiPStatus.enabled,
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
@@ -855,6 +935,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage> {
 
               // Up Next 10-Second Preview Overlay Banner
               if (!_isUpNextDismissed &&
+                  _pipStatus != PiPStatus.enabled &&
                   _duration.inSeconds > 2 &&
                   (_duration.inSeconds - _position.inSeconds) <= 10 &&
                   (_duration.inSeconds - _position.inSeconds) > 0 &&

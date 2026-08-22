@@ -5,7 +5,6 @@ import 'package:audio_service/audio_service.dart';
 
 import 'app/app.dart';
 import 'core/providers/providers.dart';
-import 'core/services/mediahub_audio_handler.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
