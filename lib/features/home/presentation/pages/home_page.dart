@@ -7,6 +7,7 @@ import '../../../../domain/entities/history_item_entity.dart';
 import '../../../../domain/entities/media_item_entity.dart';
 import '../../../history/presentation/controllers/history_controller.dart';
 import '../../../player/presentation/controllers/music_player_controller.dart';
+import '../../../../shared/media_thumbnail.dart';
 
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
@@ -314,19 +315,11 @@ class _MediaIcon extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final isVideo = item.isVideo;
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: isVideo ? colorScheme.secondaryContainer : colorScheme.primaryContainer,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Icon(
-        isVideo ? Icons.movie_rounded : Icons.music_note_rounded,
-        color: isVideo ? colorScheme.onSecondaryContainer : colorScheme.onPrimaryContainer,
-      ),
+    return MediaThumbnail(
+      artworkPath: item.artworkPath,
+      mediaType: item.mediaType,
+      size: size,
+      borderRadius: 8,
     );
   }
 }

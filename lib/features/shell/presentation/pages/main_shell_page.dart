@@ -3,21 +3,13 @@ import 'package:go_router/go_router.dart';
 
 import '../../../player/presentation/widgets/mini_player_widget.dart';
 
-
-
 class MainShellPage extends StatelessWidget {
   final StatefulNavigationShell navigationShell;
 
-  const MainShellPage({
-    super.key,
-    required this.navigationShell,
-  });
+  const MainShellPage({super.key, required this.navigationShell});
 
   void _onDestinationSelected(int index) {
-    navigationShell.goBranch(
-      index,
-      initialLocation: true,
-    );
+    navigationShell.goBranch(index, initialLocation: true);
   }
 
   @override
@@ -67,7 +59,15 @@ class MainShellPage extends StatelessWidget {
                   ],
                 ),
                 const VerticalDivider(thickness: 1, width: 1),
-                Expanded(child: navigationShell),
+                // BAGO: binalot sa Column para may lugar ang mini player sa ilalim
+                Expanded(
+                  child: Column(
+                    children: [
+                      Expanded(child: navigationShell),
+                      const MiniPlayerWidget(),
+                    ],
+                  ),
+                ),
               ],
             ),
           );
@@ -122,7 +122,6 @@ class MainShellPage extends StatelessWidget {
             ),
           ),
         );
-
       },
     );
   }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
+import '../../../../shared/media_thumbnail.dart';
 import '../controllers/music_player_controller.dart';
 import '../pages/full_music_player_page.dart';
 import '../pages/video_player_page.dart';
@@ -11,7 +11,10 @@ class MiniPlayerWidget extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    ref.listen<MusicPlayerState>(musicPlayerControllerProvider, (previous, next) {
+    ref.listen<MusicPlayerState>(musicPlayerControllerProvider, (
+      previous,
+      next,
+    ) {
       if (next.activeItem != null &&
           next.activeItem?.mediaType == 'video' &&
           previous?.activeItem?.id != next.activeItem?.id) {
@@ -23,10 +26,8 @@ class MiniPlayerWidget extends ConsumerWidget {
           if (context.mounted && !VideoPlayerPage.isActive) {
             Navigator.of(context, rootNavigator: true).push(
               MaterialPageRoute(
-                builder: (context) => VideoPlayerPage(
-                  item: videoItem,
-                  playlist: queue,
-                ),
+                builder: (context) =>
+                    VideoPlayerPage(item: videoItem, playlist: queue),
               ),
             );
           }
@@ -46,12 +47,16 @@ class MiniPlayerWidget extends ConsumerWidget {
     final colorScheme = theme.colorScheme;
 
     final progress = (playerState.duration.inMilliseconds > 0)
-        ? (playerState.position.inMilliseconds / playerState.duration.inMilliseconds)
-            .clamp(0.0, 1.0)
+        ? (playerState.position.inMilliseconds /
+                  playerState.duration.inMilliseconds)
+              .clamp(0.0, 1.0)
         : 0.0;
 
     final remainingSeconds =
-        (playerState.duration.inSeconds - playerState.position.inSeconds).clamp(0, 10);
+        (playerState.duration.inSeconds - playerState.position.inSeconds).clamp(
+          0,
+          10,
+        );
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -104,33 +109,17 @@ class MiniPlayerWidget extends ConsumerWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12.0,
+                    vertical: 8.0,
+                  ),
                   child: Row(
                     children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8.0),
-                        child: Container(
-                          width: 44,
-                          height: 44,
-                          color: colorScheme.primaryContainer,
-                          child: activeItem.artworkPath != null
-                              ? Image.asset(
-                                  activeItem.artworkPath!,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Icon(
-                                    activeItem.mediaType == 'video'
-                                        ? Icons.movie_rounded
-                                        : Icons.music_note_rounded,
-                                    color: colorScheme.onPrimaryContainer,
-                                  ),
-                                )
-                              : Icon(
-                                  activeItem.mediaType == 'video'
-                                      ? Icons.movie_rounded
-                                      : Icons.music_note_rounded,
-                                  color: colorScheme.onPrimaryContainer,
-                                ),
-                        ),
+                      MediaThumbnail(
+                        artworkPath: activeItem.artworkPath,
+                        mediaType: activeItem.mediaType,
+                        size: 44,
+                        borderRadius: 8,
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -147,7 +136,10 @@ class MiniPlayerWidget extends ConsumerWidget {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              activeItem.artist ?? (activeItem.mediaType == 'video' ? 'Video File' : 'Unknown Artist'),
+                              activeItem.artist ??
+                                  (activeItem.mediaType == 'video'
+                                      ? 'Video File'
+                                      : 'Unknown Artist'),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.bodySmall?.copyWith(
@@ -159,8 +151,10 @@ class MiniPlayerWidget extends ConsumerWidget {
                       ),
                       IconButton(
                         icon: const Icon(Icons.skip_previous_rounded),
-                        onPressed: (playerState.isShuffle ||
-                                playerState.repeatMode != PlayerRepeatMode.off ||
+                        onPressed:
+                            (playerState.isShuffle ||
+                                playerState.repeatMode !=
+                                    PlayerRepeatMode.off ||
                                 playerState.currentIndex > 0 ||
                                 playerState.position.inSeconds > 3)
                             ? () => controller.skipToPrevious()
@@ -171,8 +165,8 @@ class MiniPlayerWidget extends ConsumerWidget {
                           activeItem.mediaType == 'video'
                               ? Icons.play_circle_fill_rounded
                               : (playerState.isPlaying
-                                  ? Icons.pause_circle_filled_rounded
-                                  : Icons.play_circle_fill_rounded),
+                                    ? Icons.pause_circle_filled_rounded
+                                    : Icons.play_circle_fill_rounded),
                           size: 32,
                           color: colorScheme.primary,
                         ),
@@ -196,9 +190,12 @@ class MiniPlayerWidget extends ConsumerWidget {
                       ),
                       IconButton(
                         icon: const Icon(Icons.skip_next_rounded),
-                        onPressed: (playerState.isShuffle ||
-                                playerState.repeatMode != PlayerRepeatMode.off ||
-                                playerState.currentIndex < playerState.queue.length - 1)
+                        onPressed:
+                            (playerState.isShuffle ||
+                                playerState.repeatMode !=
+                                    PlayerRepeatMode.off ||
+                                playerState.currentIndex <
+                                    playerState.queue.length - 1)
                             ? () => controller.skipToNext()
                             : null,
                       ),
@@ -208,18 +205,6 @@ class MiniPlayerWidget extends ConsumerWidget {
                         tooltip: 'Close player',
                       ),
                     ],
-                  ),
-                ),
-                ClipRRect(
-                  borderRadius: const BorderRadius.only(
-                    bottomLeft: Radius.circular(12.0),
-                    bottomRight: Radius.circular(12.0),
-                  ),
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    minHeight: 3,
-                    backgroundColor: colorScheme.surfaceContainerHighest,
-                    valueColor: AlwaysStoppedAnimation<Color>(colorScheme.primary),
                   ),
                 ),
               ],

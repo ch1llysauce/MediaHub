@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../domain/entities/media_item_entity.dart';
+import '../../../../shared/media_thumbnail.dart';
 import '../../../favorites/presentation/controllers/favorites_controller.dart';
 
 class MediaItemTile extends ConsumerWidget {
@@ -54,37 +55,29 @@ class MediaItemTile extends ConsumerWidget {
 
     return ListTile(
       onTap: onTap,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
-      leading: ClipRRect(
-        borderRadius: BorderRadius.circular(8.0),
-        child: Container(
-          width: 52,
-          height: 52,
-          color: isAudio
-              ? colorScheme.primaryContainer
-              : colorScheme.secondaryContainer,
-          child: Icon(
-            isAudio ? Icons.music_note_rounded : Icons.movie_rounded,
-            color: isAudio
-                ? colorScheme.onPrimaryContainer
-                : colorScheme.onSecondaryContainer,
-            size: 28,
-          ),
-        ),
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: 16.0,
+        vertical: 4.0,
+      ),
+      leading: MediaThumbnail(
+        artworkPath: item.artworkPath,
+        mediaType: item.mediaType,
+        size: 52,
+        borderRadius: 8,
       ),
       title: Text(
         item.title,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: theme.textTheme.bodyLarge?.copyWith(
-          fontWeight: FontWeight.w600,
-        ),
+        style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
       ),
       subtitle: Row(
         children: [
           Expanded(
             child: Text(
-              customSubtitle ?? item.artist ?? (isAudio ? 'Unknown Artist' : 'Local Video'),
+              customSubtitle ??
+                  item.artist ??
+                  (isAudio ? 'Unknown Artist' : 'Local Video'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(
@@ -116,8 +109,12 @@ class MediaItemTile extends ConsumerWidget {
         children: [
           IconButton(
             icon: Icon(
-              isFavorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-              color: isFavorite ? Colors.redAccent : colorScheme.onSurfaceVariant,
+              isFavorite
+                  ? Icons.favorite_rounded
+                  : Icons.favorite_border_rounded,
+              color: isFavorite
+                  ? Colors.redAccent
+                  : colorScheme.onSurfaceVariant,
               size: 22,
             ),
             onPressed: () {

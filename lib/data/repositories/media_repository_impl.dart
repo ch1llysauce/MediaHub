@@ -94,7 +94,10 @@ class MediaRepositoryImpl implements MediaRepository {
   @override
   Future<void> scanDirectories(List<String> directoryPaths) async {
     final scannedFiles = await _scannerService.scanDirectories(directoryPaths);
-    final companions = scannedFiles.map(_scannerService.toCompanion).toList();
+     final companions = await Future.wait(
+    scannedFiles.map((file) => _scannerService.toCompanion(file)),
+  );
+
 
     // Batch upsert discovered media items into SQLite
     await _mediaDao.upsertMediaBatch(companions);
@@ -123,7 +126,7 @@ class MediaRepositoryImpl implements MediaRepository {
         fileSize: stat.size,
       );
 
-      final companion = _scannerService.toCompanion(scannedFile);
+      final companion = await _scannerService.toCompanion(scannedFile);
       await _mediaDao.upsertMedia(companion);
     } catch (_) {}
   }

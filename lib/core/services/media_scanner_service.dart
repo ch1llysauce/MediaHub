@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
-
+import 'media_artwork_service.dart'; 
 import '../../data/database/app_database.dart';
 
 /// Supported audio extensions
@@ -47,7 +47,9 @@ class ScannedMediaFile {
 }
 
 class MediaScannerService {
-  /// Get default device media directories for Android/desktop
+
+  final MediaArtworkService _artworkService = MediaArtworkService();
+
   List<String> getDefaultScanDirectories() {
     if (Platform.isAndroid) {
       const base = '/storage/emulated/0';
@@ -124,22 +126,27 @@ class MediaScannerService {
   }
 
   /// Convert scanned file into Drift MediaItemsCompanion for DB insertion
-  MediaItemsCompanion toCompanion(ScannedMediaFile file) {
-    // Generate deterministic id from path string
-    final id = file.path.hashCode.abs().toString();
+  Future<MediaItemsCompanion> toCompanion(ScannedMediaFile file) async {
+  final id = file.path.hashCode.abs().toString();
 
-    return MediaItemsCompanion.insert(
-      id: id,
-      path: file.path,
-      title: file.title,
-      artist: file.artist != null ? Value(file.artist) : const Value.absent(),
-      album: file.album != null ? Value(file.album) : const Value.absent(),
-      genre: file.genre != null ? Value(file.genre) : const Value.absent(),
-      duration: file.duration != null ? Value(file.duration) : const Value.absent(),
-      mediaType: file.mediaType,
-      fileSize: file.fileSize,
-      dateAdded: DateTime.now(),
-      isAvailable: const Value(true),
-    );
-  }
-}
+  final artworkPath = await _artworkService.extractArtwork(
+    filePath: file.path,
+    mediaId: id,
+    mediaType: file.mediaType,
+  );
+
+  return MediaItemsCompanion.insert(
+    id: id,
+    path: file.path,
+    title: file.title,
+    artist: file.artist != null ? Value(file.artist) : const Value.absent(),
+    album: file.album != null ? Value(file.album) : const Value.absent(),
+    genre: file.genre != null ? Value(file.genre) : const Value.absent(),
+    duration: file.duration != null ? Value(file.duration) : const Value.absent(),
+    mediaType: file.mediaType,
+    artworkPath: artworkPath != null ? Value(artworkPath) : const Value.absent(),
+    fileSize: file.fileSize,
+    dateAdded: DateTime.now(),
+    isAvailable: const Value(true),
+  );
+}}
