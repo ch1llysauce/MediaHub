@@ -1175,7 +1175,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                                         ],
                                       ),
                                     ),
-                                  // Red YouTube-style Progress Bar
+                                  // Blue MediaHub-style Progress Bar
                                   SliderTheme(
                                     data: SliderThemeData(
                                       trackHeight: 3.0,
@@ -1186,10 +1186,10 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                                           const RoundSliderOverlayShape(
                                             overlayRadius: 12.0,
                                           ),
-                                      activeTrackColor: Colors.redAccent,
+                                      activeTrackColor: Colors.blueAccent,
                                       inactiveTrackColor: Colors.white24,
-                                      thumbColor: Colors.redAccent,
-                                      overlayColor: Colors.redAccent.withValues(
+                                      thumbColor: Colors.blueAccent,
+                                      overlayColor: Colors.blueAccent.withValues(
                                         alpha: 0.2,
                                       ),
                                     ),
