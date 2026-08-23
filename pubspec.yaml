@@ -52,6 +52,7 @@ dependencies:
   floating: ^6.0.0
   video_thumbnail: ^0.5.6
   audio_metadata_reader: ^1.7.1
+  media_scanner: ^2.2.1
 
 flutter_launcher_icons:
   android: true

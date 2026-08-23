@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:media_scanner/media_scanner.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -376,6 +377,13 @@ class DownloadManager {
 
       // Add downloaded media to library.
       unawaited(_mediaRepository.scanSingleFile(targetPath));
+      if (Platform.isAndroid) {
+        unawaited(
+          MediaScanner.loadMedia(path: targetPath).catchError((e) {
+            return null;
+          }),
+        );
+      }
     } on DioException catch (e) {
       if (CancelToken.isCancel(e)) {
         if (_pauseRequested.contains(taskId)) {
