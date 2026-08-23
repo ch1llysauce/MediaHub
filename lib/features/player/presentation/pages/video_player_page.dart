@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:floating/floating.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:video_thumbnail/video_thumbnail.dart' as vt;
 
 import '../../../../core/providers/providers.dart';
 import '../../../../domain/entities/media_item_entity.dart';
@@ -33,6 +38,18 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
     with WidgetsBindingObserver {
   late final Player _player;
   late final VideoController _videoController;
+
+  bool _isDraggingSlider = false;
+  Duration _previewPosition = Duration.zero;
+  Uint8List? _previewThumbnailBytes;
+  Timer? _previewDebounceTimer;
+
+  double _scale = 1.0;
+  double _baseScale = 1.0;
+  Offset _panOffset = Offset.zero;
+  Offset _baseFocalPoint = Offset.zero;
+  int _pointerCount = 0;
+  Size _viewportSize = Size.zero;
 
   final _floating = Floating();
   static const _pipControlsChannel = MethodChannel(
@@ -456,6 +473,71 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
     }
   }
 
+  void _resetZoom() {
+    setState(() {
+      _scale = 1.0;
+      _panOffset = Offset.zero;
+    });
+  }
+
+  Offset _clampPanOffset(Offset offset, double scale) {
+    if (_viewportSize == Size.zero || scale <= 1.0) return Offset.zero;
+
+    final maxX = _viewportSize.width * (scale - 1) / 2;
+    final maxY = _viewportSize.height * (scale - 1) / 2;
+
+    return Offset(offset.dx.clamp(-maxX, maxX), offset.dy.clamp(-maxY, maxY));
+  }
+
+  void _onSliderDragStart(double value) {
+    _controlsTimer?.cancel(); 
+    setState(() {
+      _isDraggingSlider = true;
+      _previewPosition = Duration(milliseconds: value.toInt());
+    });
+    _requestPreviewFrame(_previewPosition);
+  }
+
+  void _onSliderDragChanged(double value) {
+    final newPosition = Duration(milliseconds: value.toInt());
+    setState(() => _previewPosition = newPosition);
+
+    _previewDebounceTimer?.cancel();
+    _previewDebounceTimer = Timer(const Duration(milliseconds: 120), () {
+      _requestPreviewFrame(newPosition);
+    });
+  }
+
+  void _onSliderDragEnd(double value) {
+    _previewDebounceTimer?.cancel();
+    _isCompleted = false;
+    _player.seek(Duration(milliseconds: value.toInt()));
+    setState(() {
+      _isDraggingSlider = false;
+    });
+     WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (mounted) {
+      _resetControlsTimer();
+    }
+  });
+  }
+
+  Future<void> _requestPreviewFrame(Duration position) async {
+    try {
+      final bytes = await vt.VideoThumbnail.thumbnailData(
+        video: _currentItem.path,
+        imageFormat: vt.ImageFormat.JPEG,
+        maxWidth: 200,
+        quality: 50,
+        timeMs: position.inMilliseconds,
+      );
+
+      if (mounted && _isDraggingSlider && bytes != null) {
+        setState(() => _previewThumbnailBytes = bytes);
+      }
+    } catch (_) {}
+  }
+
   void _seekRelative(int seconds) {
     _resetControlsTimer();
     _isCompleted = false;
@@ -532,6 +614,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
 
   @override
   void dispose() {
+    _previewDebounceTimer?.cancel();
     _floating.cancelOnLeavePiP();
     VideoPlayerPage.isActive = false;
     WidgetsBinding.instance.removeObserver(this);
@@ -627,10 +710,10 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
       }
     });
 
-    final durationSeconds = _duration.inSeconds.toDouble();
-    final positionSeconds = _position.inSeconds.toDouble().clamp(
+    final durationMs = _duration.inMilliseconds.toDouble();
+    final positionMs = _position.inMilliseconds.toDouble().clamp(
       0.0,
-      durationSeconds > 0 ? durationSeconds : 1.0,
+      durationMs > 0 ? durationMs : 1.0,
     );
 
     return PopScope(
@@ -642,7 +725,16 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
       child: Scaffold(
         backgroundColor: Colors.black,
         body: Listener(
-          onPointerDown: _onPointerDown,
+          onPointerDown: (event) {
+            _pointerCount++;
+            _onPointerDown(event);
+          },
+          onPointerUp: (event) {
+            if (_pointerCount > 0) _pointerCount--;
+          },
+          onPointerCancel: (event) {
+            if (_pointerCount > 0) _pointerCount--;
+          },
           child: GestureDetector(
             onTap: _onVideoTap,
             onDoubleTapDown: (details) {
@@ -654,24 +746,62 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                 _seekRelative(10);
               }
             },
-            onHorizontalDragEnd: (details) {
+            onScaleStart: (details) {
+              _baseScale = _scale;
+              _baseFocalPoint = details.focalPoint;
+            },
+            onScaleUpdate: (details) {
+              // Dalawa o higit pang daliri, o may laman na ang zoom — pinch/pan mode
+              if (_pointerCount >= 2 || _scale > 1.0) {
+                setState(() {
+                  _scale = (_baseScale * details.scale).clamp(1.0, 4.0);
+                  if (_scale > 1.0) {
+                    final delta = details.focalPoint - _baseFocalPoint;
+                    _baseFocalPoint = details.focalPoint;
+                    _panOffset = _clampPanOffset(_panOffset + delta, _scale);
+                  } else {
+                    _panOffset = Offset.zero;
+                  }
+                });
+              }
+            },
+            onScaleEnd: (details) {
               _resetControlsTimer();
-              final velocity = details.primaryVelocity ?? 0;
-              if (velocity < -300) {
-                _skipToNext();
-              } else if (velocity > 300) {
-                _skipToPrevious();
+
+              if (_pointerCount < 2 && _scale <= 1.01) {
+                final velocity = details.velocity.pixelsPerSecond.dx;
+                if (velocity < -300) {
+                  _skipToNext();
+                } else if (velocity > 300) {
+                  _skipToPrevious();
+                }
+              }
+
+              if (_scale < 1.05) {
+                _resetZoom();
               }
             },
             child: Stack(
               alignment: Alignment.center,
               children: [
                 // Video Viewport
-                Center(
-                  child: Video(
-                    controller: _videoController,
-                    controls: NoVideoControls,
-                  ),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    _viewportSize = constraints.biggest;
+
+                    return Center(
+                      child: Transform(
+                        transform: Matrix4.identity()
+                          ..translate(_panOffset.dx, _panOffset.dy)
+                          ..scale(_scale),
+                        alignment: Alignment.center,
+                        child: Video(
+                          controller: _videoController,
+                          controls: NoVideoControls,
+                        ),
+                      ),
+                    );
+                  },
                 ),
 
                 // Double-Tap Rewind Overlay Indicator (-10s)
@@ -846,6 +976,42 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                           ),
                         ),
 
+                        if (_scale > 1.05)
+                          Positioned(
+                            top: MediaQuery.of(context).padding.top + 56,
+                            right: 16,
+                            child: GestureDetector(
+                              onTap: _resetZoom,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.6),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: const [
+                                    Icon(
+                                      Icons.zoom_out_map_rounded,
+                                      color: Colors.white,
+                                      size: 16,
+                                    ),
+                                    SizedBox(width: 6),
+                                    Text(
+                                      'Reset',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
                         // Center Controls Row (Prev | Play/Pause | Next)
                         Center(
                           child: Builder(
@@ -943,6 +1109,72 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
+                                  // Floating Preview Bubble — lumalabas lang habang naka-drag
+                                  if (_isDraggingSlider)
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        bottom: 8.0,
+                                      ),
+                                      child: Column(
+                                        children: [
+                                          Container(
+                                            width: 140,
+                                            height: 79,
+                                            clipBehavior: Clip.antiAlias,
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                              border: Border.all(
+                                                color: Colors.white,
+                                                width: 2,
+                                              ),
+                                              color: Colors.black,
+                                            ),
+                                            child:
+                                                _previewThumbnailBytes != null
+                                                ? Image.memory(
+                                                    _previewThumbnailBytes!,
+                                                    fit: BoxFit.cover,
+                                                    gaplessPlayback: true,
+                                                  )
+                                                : const Center(
+                                                    child: SizedBox(
+                                                      width: 20,
+                                                      height: 20,
+                                                      child:
+                                                          CircularProgressIndicator(
+                                                            strokeWidth: 2,
+                                                            color:
+                                                                Colors.white54,
+                                                          ),
+                                                    ),
+                                                  ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 2,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black.withValues(
+                                                alpha: 0.7,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              _formatDuration(_previewPosition),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   // Red YouTube-style Progress Bar
                                   SliderTheme(
                                     data: SliderThemeData(
@@ -962,17 +1194,14 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                                       ),
                                     ),
                                     child: Slider(
-                                      value: positionSeconds,
-                                      max: durationSeconds > 0
-                                          ? durationSeconds
-                                          : 1.0,
-                                      onChanged: (value) {
-                                        _resetControlsTimer();
-                                        _isCompleted = false;
-                                        _player.seek(
-                                          Duration(seconds: value.toInt()),
-                                        );
-                                      },
+                                      value: _isDraggingSlider
+                                          ? _previewPosition.inMilliseconds
+                                                .toDouble()
+                                          : positionMs,
+                                      max: durationMs > 0 ? durationMs : 1.0,
+                                      onChangeStart: _onSliderDragStart,
+                                      onChanged: _onSliderDragChanged,
+                                      onChangeEnd: _onSliderDragEnd,
                                     ),
                                   ),
 

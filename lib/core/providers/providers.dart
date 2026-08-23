@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/material.dart';
 
 import '../../data/database/app_database.dart';
 import '../../data/database/daos/downloads_dao.dart';
@@ -18,6 +19,8 @@ import '../services/audio_player_service.dart';
 import '../services/downloader/download_manager.dart';
 import '../services/media_scanner_service.dart';
 import '../services/mediahub_audio_handler.dart';
+
+final libraryFolderBackInterceptProvider = StateProvider<VoidCallback?>((ref) => null);
 
 /// Database singleton provider
 final appDatabaseProvider = Provider<AppDatabase>((ref) {

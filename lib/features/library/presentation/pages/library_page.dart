@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/providers/providers.dart';
@@ -35,7 +34,9 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   @override
   Widget build(BuildContext context) {
     ref.listen<LibraryState>(libraryControllerProvider, (previous, next) {
-      if (previous?.isScanning == true && !next.isScanning && next.statusMessage != null) {
+      if (previous?.isScanning == true &&
+          !next.isScanning &&
+          next.statusMessage != null) {
         final message = next.statusMessage!;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
@@ -52,13 +53,10 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
       }
     });
 
-
     final libraryState = ref.watch(libraryControllerProvider);
     final controller = ref.read(libraryControllerProvider.notifier);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-
-
 
     return DefaultTabController(
       length: 4,
@@ -89,14 +87,19 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                     )
                   : const Icon(Icons.sync_rounded),
               tooltip: 'Scan Storage',
-              onPressed: libraryState.isScanning ? null : () => controller.scanDeviceMedia(),
+              onPressed: libraryState.isScanning
+                  ? null
+                  : () => controller.scanDeviceMedia(),
             ),
           ],
           bottom: const TabBar(
             indicatorSize: TabBarIndicatorSize.tab,
             tabs: [
               Tab(text: 'All'),
-              Tab(icon: Icon(Icons.music_note_rounded, size: 18), text: 'Music'),
+              Tab(
+                icon: Icon(Icons.music_note_rounded, size: 18),
+                text: 'Music',
+              ),
               Tab(icon: Icon(Icons.movie_rounded, size: 18), text: 'Videos'),
               Tab(icon: Icon(Icons.folder_outlined, size: 18), text: 'Folders'),
             ],
@@ -107,7 +110,10 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
             if (libraryState.isScanning && libraryState.statusMessage != null)
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16.0,
+                  vertical: 8.0,
+                ),
                 color: colorScheme.primaryContainer.withValues(alpha: 0.5),
                 child: Row(
                   children: [
@@ -129,7 +135,8 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                   ],
                 ),
               ),
-            if (libraryState.errorMessage != null && !libraryState.permissionGranted)
+            if (libraryState.errorMessage != null &&
+                !libraryState.permissionGranted)
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(12.0),
@@ -140,7 +147,10 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.warning_amber_rounded, color: colorScheme.onErrorContainer),
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      color: colorScheme.onErrorContainer,
+                    ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
@@ -163,17 +173,20 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                   _MediaListView(
                     streamProvider: allMediaStreamProvider,
                     emptyTitle: 'No media items found',
-                    emptySubtitle: 'Tap "Scan Device Media" to discover local audio and video files.',
+                    emptySubtitle:
+                        'Tap "Scan Device Media" to discover local audio and video files.',
                   ),
                   _MediaListView(
                     streamProvider: musicMediaStreamProvider,
                     emptyTitle: 'No music files found',
-                    emptySubtitle: 'Scan your device to find MP3, M4A, FLAC, and audio tracks.',
+                    emptySubtitle:
+                        'Scan your device to find MP3, M4A, FLAC, and audio tracks.',
                   ),
                   _MediaListView(
                     streamProvider: videoMediaStreamProvider,
                     emptyTitle: 'No video files found',
-                    emptySubtitle: 'Scan your device to find MP4, MKV, and local videos.',
+                    emptySubtitle:
+                        'Scan your device to find MP4, MKV, and local videos.',
                   ),
                   const _FolderListView(),
                 ],
@@ -182,12 +195,17 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
           ],
         ),
         floatingActionButton: FloatingActionButton.extended(
-          onPressed: libraryState.isScanning ? null : () => controller.scanDeviceMedia(),
+          onPressed: libraryState.isScanning
+              ? null
+              : () => controller.scanDeviceMedia(),
           icon: libraryState.isScanning
               ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
               : const Icon(Icons.search_rounded),
           label: Text(libraryState.isScanning ? 'Scanning...' : 'Scan Storage'),
@@ -213,7 +231,6 @@ class _MediaListView extends ConsumerWidget {
     final mediaAsync = ref.watch(streamProvider);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-
     return mediaAsync.when(
       data: (rawItems) {
         final searchState = ref.watch(searchControllerProvider);
@@ -229,7 +246,9 @@ class _MediaListView extends ConsumerWidget {
                     width: 80,
                     height: 80,
                     decoration: BoxDecoration(
-                      color: colorScheme.primaryContainer.withValues(alpha: 0.4),
+                      color: colorScheme.primaryContainer.withValues(
+                        alpha: 0.4,
+                      ),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
@@ -257,7 +276,9 @@ class _MediaListView extends ConsumerWidget {
                   const SizedBox(height: 24),
                   OutlinedButton.icon(
                     onPressed: () {
-                      ref.read(libraryControllerProvider.notifier).scanDeviceMedia();
+                      ref
+                          .read(libraryControllerProvider.notifier)
+                          .scanDeviceMedia();
                     },
                     icon: const Icon(Icons.manage_search_rounded),
                     label: const Text('Scan Storage Now'),
@@ -270,39 +291,48 @@ class _MediaListView extends ConsumerWidget {
 
         return ListView.separated(
           itemCount: items.length,
-          separatorBuilder: (context, index) => const Divider(height: 1, indent: 76),
+          separatorBuilder: (context, index) =>
+              const Divider(height: 1, indent: 76),
           itemBuilder: (context, index) {
             final item = items[index];
             return MediaItemTile(
               item: item,
               onTap: () {
-                ref.read(musicPlayerControllerProvider.notifier).playItem(item, queue: items);
+                ref
+                    .read(musicPlayerControllerProvider.notifier)
+                    .playItem(item, queue: items);
               },
               onMoreTap: () => AddToPlaylistDialog.show(context, item),
             );
           },
         );
       },
-      loading: () => const Center(
-        child: CircularProgressIndicator(),
-      ),
+      loading: () => const Center(child: CircularProgressIndicator()),
       error: (err, stack) => Center(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.error_outline_rounded, size: 48, color: colorScheme.error),
+              Icon(
+                Icons.error_outline_rounded,
+                size: 48,
+                color: colorScheme.error,
+              ),
               const SizedBox(height: 16),
               Text(
                 'Failed to load media items',
-                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(height: 8),
               Text(
                 err.toString(),
                 textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.error),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colorScheme.error,
+                ),
               ),
             ],
           ),
@@ -322,6 +352,28 @@ class _FolderListView extends ConsumerStatefulWidget {
 class _FolderListViewState extends ConsumerState<_FolderListView> {
   String? _activeFolderPath;
 
+  // BAGO: centralized setter na nag-sync sa shared back-intercept provider
+  void _setActiveFolder(String? path) {
+    setState(() {
+      _activeFolderPath = path;
+    });
+    ref.read(libraryFolderBackInterceptProvider.notifier).state =
+        path != null ? () => _setActiveFolder(null) : null;
+  }
+
+  @override
+  void dispose() {
+    // I-clear ang intercept kapag umalis sa Folders tab (hal. lumipat ng branch)
+    // para hindi "mag-stick" ang back interception sa ibang tabs
+    Future.microtask(() {
+      final notifier = ref.read(libraryFolderBackInterceptProvider.notifier);
+      if (notifier.state != null) {
+        notifier.state = null;
+      }
+    });
+    super.dispose();
+  }
+
   String _cleanFolderName(String dirPath) {
     if (dirPath.contains('/storage/emulated/0/')) {
       final relative = dirPath.replaceFirst('/storage/emulated/0/', '');
@@ -335,7 +387,6 @@ class _FolderListViewState extends ConsumerState<_FolderListView> {
     final mediaAsync = ref.watch(allMediaStreamProvider);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-
     return mediaAsync.when(
       data: (rawItems) {
         final searchState = ref.watch(searchControllerProvider);
@@ -352,7 +403,9 @@ class _FolderListViewState extends ConsumerState<_FolderListView> {
                     width: 80,
                     height: 80,
                     decoration: BoxDecoration(
-                      color: colorScheme.primaryContainer.withValues(alpha: 0.4),
+                      color: colorScheme.primaryContainer.withValues(
+                        alpha: 0.4,
+                      ),
                       shape: BoxShape.circle,
                     ),
                     child: Icon(
@@ -391,10 +444,15 @@ class _FolderListViewState extends ConsumerState<_FolderListView> {
         }
 
         final sortedFolders = grouped.keys.toList()
-          ..sort((a, b) => _cleanFolderName(a).toLowerCase().compareTo(_cleanFolderName(b).toLowerCase()));
+          ..sort(
+            (a, b) => _cleanFolderName(
+              a,
+            ).toLowerCase().compareTo(_cleanFolderName(b).toLowerCase()),
+          );
 
         // Check if an active folder is selected
-        if (_activeFolderPath != null && grouped.containsKey(_activeFolderPath)) {
+        if (_activeFolderPath != null &&
+            grouped.containsKey(_activeFolderPath)) {
           final folderItems = grouped[_activeFolderPath]!;
           final folderName = _cleanFolderName(_activeFolderPath!);
 
@@ -403,17 +461,16 @@ class _FolderListViewState extends ConsumerState<_FolderListView> {
               // Header bar for active folder
               Container(
                 color: colorScheme.surfaceContainerLow,
-                padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8.0,
+                  vertical: 6.0,
+                ),
                 child: Row(
                   children: [
                     IconButton(
                       icon: const Icon(Icons.arrow_back_rounded),
                       tooltip: 'Back to folders',
-                      onPressed: () {
-                        setState(() {
-                          _activeFolderPath = null;
-                        });
-                      },
+                      onPressed: () => _setActiveFolder(null),
                     ),
                     Expanded(
                       child: Column(
@@ -453,7 +510,8 @@ class _FolderListViewState extends ConsumerState<_FolderListView> {
               Expanded(
                 child: ListView.separated(
                   itemCount: folderItems.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1, indent: 76),
+                  separatorBuilder: (_, __) =>
+                      const Divider(height: 1, indent: 76),
                   itemBuilder: (context, index) {
                     final item = folderItems[index];
                     return MediaItemTile(
@@ -463,7 +521,8 @@ class _FolderListViewState extends ConsumerState<_FolderListView> {
                             .read(musicPlayerControllerProvider.notifier)
                             .playItem(item, queue: folderItems);
                       },
-                      onMoreTap: () => AddToPlaylistDialog.show(context, item),
+                      onMoreTap: () =>
+                          AddToPlaylistDialog.show(context, item),
                     );
                   },
                 ),
@@ -481,12 +540,22 @@ class _FolderListViewState extends ConsumerState<_FolderListView> {
             final folderItems = grouped[folderPath]!;
             final folderName = _cleanFolderName(folderPath);
 
-            final audioCount = folderItems.where((i) => i.mediaType == 'audio').length;
-            final videoCount = folderItems.where((i) => i.mediaType == 'video').length;
+            final audioCount = folderItems
+                .where((i) => i.mediaType == 'audio')
+                .length;
+            final videoCount = folderItems
+                .where((i) => i.mediaType == 'video')
+                .length;
 
             final subtitleParts = <String>[];
-            if (audioCount > 0) subtitleParts.add('$audioCount ${audioCount == 1 ? 'song' : 'songs'}');
-            if (videoCount > 0) subtitleParts.add('$videoCount ${videoCount == 1 ? 'video' : 'videos'}');
+            if (audioCount > 0)
+              subtitleParts.add(
+                '$audioCount ${audioCount == 1 ? 'song' : 'songs'}',
+              );
+            if (videoCount > 0)
+              subtitleParts.add(
+                '$videoCount ${videoCount == 1 ? 'video' : 'videos'}',
+              );
 
             return ListTile(
               leading: Container(
@@ -518,19 +587,14 @@ class _FolderListViewState extends ConsumerState<_FolderListView> {
                 Icons.chevron_right_rounded,
                 color: colorScheme.onSurfaceVariant,
               ),
-              onTap: () {
-                setState(() {
-                  _activeFolderPath = folderPath;
-                });
-              },
+              onTap: () => _setActiveFolder(folderPath),
             );
           },
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (err, stack) => Center(
-        child: Text('Error loading folders: $err'),
-      ),
+      error: (err, stack) =>
+          Center(child: Text('Error loading folders: $err')),
     );
   }
 }
