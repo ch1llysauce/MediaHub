@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../domain/entities/media_item_entity.dart';
+import '../../../player/presentation/pages/full_music_player_page.dart';
+import '../../../player/presentation/pages/video_player_page.dart';
+import 'package:mediahub/shared/media_item_options_modal.dart';
 import '../../../library/presentation/widgets/media_item_tile.dart';
-import '../../../playlists/presentation/widgets/add_to_playlist_dialog.dart';
 import '../../../player/presentation/controllers/music_player_controller.dart';
 import '../controllers/history_controller.dart';
 
@@ -239,41 +242,8 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
                             child: MediaItemTile(
                               item: item,
                               customSubtitle: subtitleDetails.join(' • '),
-                              onTap: () {
-                                ref.read(musicPlayerControllerProvider.notifier).playItem(
-                                      item,
-                                      queue: allMediaList,
-                                    );
-                              },
-                              onMoreTap: () {
-                                showModalBottomSheet(
-                                  context: context,
-                                  builder: (context) => Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      ListTile(
-                                        leading: const Icon(Icons.playlist_add_rounded),
-                                        title: const Text('Add to Playlist'),
-                                        onTap: () {
-                                          Navigator.pop(context);
-                                          showDialog(
-                                            context: context,
-                                            builder: (_) => AddToPlaylistDialog(mediaItem: item),
-                                          );
-                                        },
-                                      ),
-                                      ListTile(
-                                        leading: const Icon(Icons.delete_outline_rounded),
-                                        title: const Text('Remove from History'),
-                                        onTap: () {
-                                          Navigator.pop(context);
-                                          ref.read(historyControllerProvider).removeHistoryItem(item.id);
-                                        },
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              },
+                              onTap: () => _onMediaItemTap(context, ref, item, allMediaList),
+                              onMoreTap: () => MediaItemOptionsModal.show(context, item),
                             ),
                           );
                         },
@@ -288,5 +258,28 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
         ),
       ),
     );
+  }
+
+  void _onMediaItemTap(
+    BuildContext context,
+    WidgetRef ref,
+    MediaItemEntity item,
+    List<MediaItemEntity> queue,
+  ) {
+    if (item.mediaType == 'video') {
+      Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute(
+          builder: (context) => VideoPlayerPage(
+            item: item,
+            playlist: queue,
+          ),
+        ),
+      );
+    } else {
+      ref
+          .read(musicPlayerControllerProvider.notifier)
+          .playItem(item, queue: queue);
+      FullMusicPlayerPage.open(context);
+    }
   }
 }

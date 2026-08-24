@@ -17,48 +17,59 @@ class UpNextBannerWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
     final isVideo = item.mediaType == 'video';
+    final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    final primaryAccent = Theme.of(context).colorScheme.primary;
+
+    // Dedicated type recognition colors for AUDIO vs VIDEO chips
+    final typeAccentColor = isVideo ? const Color(0xFFFFB74D) : const Color(0xFF4DD0E1);
+    final badgeBg = typeAccentColor.withValues(alpha: 0.18);
+    final badgeBorder = typeAccentColor.withValues(alpha: 0.4);
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeInOut,
-      margin: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 6.0),
-      padding: const EdgeInsets.all(12.0),
+      margin: EdgeInsets.symmetric(
+        horizontal: isLandscape ? 0.0 : 14.0,
+        vertical: isLandscape ? 0.0 : 8.0,
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: isLandscape ? 10.0 : 12.0,
+        vertical: isLandscape ? 6.0 : 10.0,
+      ),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHigh.withValues(alpha: 0.95),
-        borderRadius: BorderRadius.circular(16.0),
+        color: const Color(0xFF1E1E28).withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(isLandscape ? 16.0 : 20.0),
         border: Border.all(
-          color: isVideo ? Colors.amber.shade400 : colorScheme.primary,
-          width: 1.5,
+          color: primaryAccent.withValues(alpha: 0.6),
+          width: 1.2,
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.25),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+            color: Colors.black.withValues(alpha: 0.4),
+            blurRadius: 16,
+            spreadRadius: 2,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
       child: Row(
         children: [
           if (onDismiss != null) ...[
-            const SizedBox(width: 4),
             InkWell(
               onTap: onDismiss,
               borderRadius: BorderRadius.circular(20),
               child: Padding(
-                padding: const EdgeInsets.all(4.0),
+                padding: EdgeInsets.all(isLandscape ? 4.0 : 6.0),
                 child: Icon(
-                  Icons.cancel_rounded,
-                  size: 24,
-                  color: colorScheme.onSurfaceVariant,
+                  Icons.close_rounded,
+                  size: isLandscape ? 18 : 20,
+                  color: Colors.white70,
                 ),
               ),
             ),
+            SizedBox(width: isLandscape ? 2 : 4),
           ],
-          const SizedBox(width: 12),
           // Title, Artist, & Media Type Badge
           Expanded(
             child: Column(
@@ -69,67 +80,91 @@ class UpNextBannerWidget extends StatelessWidget {
                   children: [
                     Text(
                       'Up Next in ${remainingSeconds}s',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: colorScheme.secondary,
+                      style: TextStyle(
+                        color: primaryAccent,
                         fontWeight: FontWeight.bold,
+                        fontSize: isLandscape ? 11 : 12,
+                        letterSpacing: 0.2,
                       ),
                     ),
                     const SizedBox(width: 6),
-                    // Type Badge
+                    // Type Recognition Chip (AUDIO / VIDEO)
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                       decoration: BoxDecoration(
-                        color: isVideo
-                            ? Colors.amber.shade400.withValues(alpha: 0.2)
-                            : colorScheme.primary.withValues(alpha: 0.15),
+                        color: badgeBg,
                         borderRadius: BorderRadius.circular(6.0),
+                        border: Border.all(color: badgeBorder, width: 0.8),
                       ),
                       child: Text(
-                        isVideo ? '🎬 VIDEO' : '🎵 AUDIO',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          fontSize: 9,
+                        isVideo ? 'VIDEO' : 'AUDIO',
+                        style: TextStyle(
+                          fontSize: 8.5,
                           fontWeight: FontWeight.w900,
-                          color: isVideo ? Colors.amber.shade400 : colorScheme.primary,
+                          color: typeAccentColor,
+                          letterSpacing: 0.5,
                         ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 3),
+                SizedBox(height: isLandscape ? 2 : 4),
                 Text(
                   item.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium?.copyWith(
+                  style: TextStyle(
+                    color: Colors.white,
                     fontWeight: FontWeight.bold,
+                    fontSize: isLandscape ? 12.5 : 13.5,
                   ),
                 ),
-                Text(
-                  item.artist ?? (isVideo ? 'Video File' : 'Unknown Artist'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
+                if (!isLandscape) ...[
+                  const SizedBox(height: 1),
+                  Text(
+                    item.artist ?? (isVideo ? 'Video File' : 'Unknown Artist'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.65),
+                      fontSize: 11.5,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 8),
           // Play Now Action Button
-          FilledButton.tonal(
+          ElevatedButton(
             onPressed: onPlayNow,
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryAccent,
+              foregroundColor: Colors.black,
+              elevation: 0,
+              padding: EdgeInsets.symmetric(
+                horizontal: isLandscape ? 10 : 12,
+                vertical: isLandscape ? 6 : 8,
+              ),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14.0),
+              ),
             ),
-            child: const Row(
+            child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.skip_next_rounded, size: 16),
-                SizedBox(width: 4),
-                Text('Play Now', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                Icon(Icons.skip_next_rounded, size: isLandscape ? 15 : 16, color: Colors.black),
+                const SizedBox(width: 3),
+                Text(
+                  'Play Now',
+                  style: TextStyle(
+                    fontSize: isLandscape ? 11 : 11.5,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black,
+                  ),
+                ),
               ],
             ),
           ),

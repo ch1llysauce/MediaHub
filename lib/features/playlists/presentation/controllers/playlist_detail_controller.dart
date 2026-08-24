@@ -1,6 +1,7 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:just_audio/just_audio.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../domain/entities/media_item_entity.dart';
 import '../../../../domain/repositories/media_repository.dart';
@@ -42,16 +43,16 @@ class PlaylistDetailController
 
     _isProbing = true;
     for (final item in missing) {
-      final player = AudioPlayer();
       try {
-        final dur = await player.setFilePath(item.path);
-        if (dur != null && dur.inSeconds > 0) {
-          await _mediaRepository.updateMediaDuration(item.id, dur.inSeconds);
+        final file = File(item.path);
+        if (await file.exists()) {
+          final metadata = readMetadata(file);
+          if (metadata.duration != null && metadata.duration!.inSeconds > 0) {
+            await _mediaRepository.updateMediaDuration(item.id, metadata.duration!.inSeconds);
+          }
         }
       } catch (_) {
         // Ignore unreadable files safely
-      } finally {
-        await player.dispose();
       }
     }
     _isProbing = false;

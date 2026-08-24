@@ -15,6 +15,7 @@ class AddToPlaylistDialog extends ConsumerWidget {
   static Future<void> show(BuildContext context, MediaItemEntity item) {
     return showModalBottomSheet(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => AddToPlaylistDialog(mediaItem: item),

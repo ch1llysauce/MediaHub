@@ -7,16 +7,29 @@ import '../../../../domain/entities/history_item_entity.dart';
 import '../../../../domain/entities/media_item_entity.dart';
 import '../../../history/presentation/controllers/history_controller.dart';
 import '../../../player/presentation/controllers/music_player_controller.dart';
+import '../../../player/presentation/pages/full_music_player_page.dart';
 import '../../../../shared/media_thumbnail.dart';
 
 class HomePage extends ConsumerWidget {
   const HomePage({super.key});
 
-  void _openMedia(BuildContext context, WidgetRef ref, MediaItemEntity item) {
+  void _openMedia(
+    BuildContext context,
+    WidgetRef ref,
+    MediaItemEntity item, {
+    List<MediaItemEntity>? playlist,
+  }) {
     if (item.isVideo) {
-      context.pushNamed('videoPlayer', extra: item);
+      context.pushNamed(
+        'videoPlayer',
+        extra: playlist != null ? {'item': item, 'playlist': playlist} : item,
+      );
     } else {
-      ref.read(musicPlayerControllerProvider.notifier).playItem(item);
+      ref.read(musicPlayerControllerProvider.notifier).playItem(
+            item,
+            queue: playlist,
+          );
+      FullMusicPlayerPage.open(context);
     }
   }
 
@@ -38,7 +51,7 @@ class HomePage extends ConsumerWidget {
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
-            onPressed: () => context.pushNamed('settings'),
+            onPressed: () => context.goNamed('settings'),
             tooltip: 'Settings',
           ),
         ],
@@ -62,7 +75,7 @@ class HomePage extends ConsumerWidget {
           _SectionTitle(
             title: 'Recently played',
             action: TextButton(
-              onPressed: () => context.pushNamed('history'),
+              onPressed: () => context.goNamed('history'),
               child: const Text('See all'),
             ),
           ),
@@ -73,27 +86,43 @@ class HomePage extends ConsumerWidget {
               icon: Icons.history_rounded,
               message: 'Unable to load playback history.',
             ),
-            data: (items) => items.isEmpty
-                ? const _EmptySection(
-                    icon: Icons.history_rounded,
-                    message: 'Play a song or video to see it here.',
-                  )
-                : SizedBox(
-                    height: 150,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: items.length > 8 ? 8 : items.length,
-                      separatorBuilder: (_, index) => const SizedBox(width: 12),
-                      itemBuilder: (context, index) {
-                        final entry = items[index];
-                        return _RecentCard(
-                          item: entry.mediaItem,
-                          subtitle: _relativeTime(entry.lastPlayed),
-                          onTap: () => _openMedia(context, ref, entry.mediaItem),
-                        );
-                      },
-                    ),
-                  ),
+            data: (items) {
+              if (items.isEmpty) {
+                return const _EmptySection(
+                  icon: Icons.history_rounded,
+                  message: 'Play a song or video to see it here.',
+                );
+              }
+
+              final recentVideoList = items
+                  .where((entry) => entry.mediaItem.isVideo)
+                  .map((entry) => entry.mediaItem)
+                  .toList();
+
+              final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+
+              return SizedBox(
+                height: isLandscape ? 130 : 150,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: items.length > 8 ? 8 : items.length,
+                  separatorBuilder: (_, index) => const SizedBox(width: 12),
+                  itemBuilder: (context, index) {
+                    final entry = items[index];
+                    return _RecentCard(
+                      item: entry.mediaItem,
+                      subtitle: _relativeTime(entry.lastPlayed),
+                      onTap: () => _openMedia(
+                        context,
+                        ref,
+                        entry.mediaItem,
+                        playlist: entry.mediaItem.isVideo ? recentVideoList : null,
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
           ),
           const SizedBox(height: 28),
           const _SectionTitle(title: 'Continue watching'),
@@ -109,27 +138,37 @@ class HomePage extends ConsumerWidget {
                   .where((entry) => entry.mediaItem.isVideo && entry.playbackPosition > 0)
                   .take(5)
                   .toList();
-              return videos.isEmpty
-                  ? const _EmptySection(
-                      icon: Icons.play_circle_outline_rounded,
-                      message: 'Videos you have started will appear here.',
-                    )
-                  : Column(
-                      children: [
-                        for (final entry in videos)
-                          _ContinueTile(
-                            entry: entry,
-                            onTap: () => _openMedia(context, ref, entry.mediaItem),
-                          ),
-                      ],
-                    );
+              if (videos.isEmpty) {
+                return const _EmptySection(
+                  icon: Icons.play_circle_outline_rounded,
+                  message: 'Videos you have started will appear here.',
+                );
+              }
+
+              final continueVideoList =
+                  videos.map((entry) => entry.mediaItem).toList();
+
+              return Column(
+                children: [
+                  for (final entry in videos)
+                    _ContinueTile(
+                      entry: entry,
+                      onTap: () => _openMedia(
+                        context,
+                        ref,
+                        entry.mediaItem,
+                        playlist: continueVideoList,
+                      ),
+                    ),
+                ],
+              );
             },
           ),
           const SizedBox(height: 28),
           _SectionTitle(
             title: 'Featured media',
             action: TextButton(
-              onPressed: () => context.pushNamed('library'),
+              onPressed: () => context.goNamed('library'),
               child: const Text('Open library'),
             ),
           ),
@@ -144,28 +183,38 @@ class HomePage extends ConsumerWidget {
               final featured = [...items]
                 ..sort((first, second) => second.dateAdded.compareTo(first.dateAdded));
               final visibleItems = featured.take(5).toList();
-              return visibleItems.isEmpty
-                  ? const _EmptySection(
-                      icon: Icons.perm_media_outlined,
-                      message: 'Scan your device to add media to the library.',
-                    )
-                  : Column(
-                      children: [
-                        for (final item in visibleItems)
-                          ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: _MediaIcon(item: item),
-                            title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                            subtitle: Text(
-                              item.artist ?? (item.isVideo ? 'Local video' : 'Unknown artist'),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            trailing: const Icon(Icons.chevron_right_rounded),
-                            onTap: () => _openMedia(context, ref, item),
-                          ),
-                      ],
-                    );
+              if (visibleItems.isEmpty) {
+                return const _EmptySection(
+                  icon: Icons.perm_media_outlined,
+                  message: 'Scan your device to add media to the library.',
+                );
+              }
+
+              final featuredVideoList =
+                  visibleItems.where((item) => item.isVideo).toList();
+
+              return Column(
+                children: [
+                  for (final item in visibleItems)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: _MediaIcon(item: item),
+                      title: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(
+                        item.artist ?? (item.isVideo ? 'Local video' : 'Unknown artist'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: const Icon(Icons.chevron_right_rounded),
+                      onTap: () => _openMedia(
+                        context,
+                        ref,
+                        item,
+                        playlist: item.isVideo ? featuredVideoList : null,
+                      ),
+                    ),
+                ],
+              );
             },
           ),
         ],
@@ -204,7 +253,7 @@ class _QuickActions extends StatelessWidget {
               margin: EdgeInsets.zero,
               child: InkWell(
                 borderRadius: BorderRadius.circular(12),
-                onTap: () => context.pushNamed(actions[index].$3),
+                onTap: () => context.goNamed(actions[index].$3),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   child: Column(

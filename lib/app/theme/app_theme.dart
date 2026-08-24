@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
 import 'app_colors.dart';
+import 'app_color_scheme.dart';
 
 /// Centralized Material 3 ThemeData generator for MediaHub
 abstract class AppTheme {
-  static ThemeData get darkTheme {
+  static ThemeData getDarkTheme([AppColorScheme scheme = AppColorScheme.teal]) {
+    final primaryColor = scheme.darkPrimary;
+
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       scaffoldBackgroundColor: AppColors.darkBackground,
-      colorScheme: const ColorScheme.dark(
-        primary: AppColors.darkPrimary,
+      colorScheme: ColorScheme.dark(
+        primary: primaryColor,
         secondary: AppColors.darkSecondary,
         surface: AppColors.darkSurface,
         surfaceContainerHigh: AppColors.darkSurfaceVariant,
@@ -20,22 +23,24 @@ abstract class AppTheme {
       appBarTheme: const AppBarTheme(
         backgroundColor: AppColors.darkBackground,
         foregroundColor: AppColors.darkTextPrimary,
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
         elevation: 0,
         centerTitle: false,
       ),
-      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
         backgroundColor: AppColors.darkSurface,
-        selectedItemColor: AppColors.darkPrimary,
+        selectedItemColor: primaryColor,
         unselectedItemColor: AppColors.darkTextSecondary,
         type: BottomNavigationBarType.fixed,
         elevation: 8,
       ),
-      navigationRailTheme: const NavigationRailThemeData(
+      navigationRailTheme: NavigationRailThemeData(
         backgroundColor: AppColors.darkSurface,
-        selectedIconTheme: IconThemeData(color: AppColors.darkPrimary),
-        selectedLabelTextStyle: TextStyle(color: AppColors.darkPrimary, fontWeight: FontWeight.bold),
-        unselectedIconTheme: IconThemeData(color: AppColors.darkTextSecondary),
-        unselectedLabelTextStyle: TextStyle(color: AppColors.darkTextSecondary),
+        selectedIconTheme: IconThemeData(color: primaryColor),
+        selectedLabelTextStyle: TextStyle(color: primaryColor, fontWeight: FontWeight.bold),
+        unselectedIconTheme: const IconThemeData(color: AppColors.darkTextSecondary),
+        unselectedLabelTextStyle: const TextStyle(color: AppColors.darkTextSecondary),
       ),
       cardTheme: CardThemeData(
         color: AppColors.darkSurface,
@@ -47,13 +52,15 @@ abstract class AppTheme {
     );
   }
 
-  static ThemeData get lightTheme {
+  static ThemeData getLightTheme([AppColorScheme scheme = AppColorScheme.teal]) {
+    final primaryColor = scheme.lightPrimary;
+
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
       scaffoldBackgroundColor: AppColors.lightBackground,
-      colorScheme: const ColorScheme.light(
-        primary: AppColors.lightPrimary,
+      colorScheme: ColorScheme.light(
+        primary: primaryColor,
         secondary: AppColors.lightSecondary,
         surface: AppColors.lightSurface,
         surfaceContainerHigh: AppColors.lightSurfaceVariant,
@@ -64,22 +71,24 @@ abstract class AppTheme {
       appBarTheme: const AppBarTheme(
         backgroundColor: AppColors.lightBackground,
         foregroundColor: AppColors.lightTextPrimary,
+        surfaceTintColor: Colors.transparent,
+        scrolledUnderElevation: 0,
         elevation: 0,
         centerTitle: false,
       ),
-      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
         backgroundColor: AppColors.lightSurface,
-        selectedItemColor: AppColors.lightPrimary,
+        selectedItemColor: primaryColor,
         unselectedItemColor: AppColors.lightTextSecondary,
         type: BottomNavigationBarType.fixed,
         elevation: 8,
       ),
-      navigationRailTheme: const NavigationRailThemeData(
+      navigationRailTheme: NavigationRailThemeData(
         backgroundColor: AppColors.lightSurface,
-        selectedIconTheme: IconThemeData(color: AppColors.lightPrimary),
-        selectedLabelTextStyle: TextStyle(color: AppColors.lightPrimary, fontWeight: FontWeight.bold),
-        unselectedIconTheme: IconThemeData(color: AppColors.lightTextSecondary),
-        unselectedLabelTextStyle: TextStyle(color: AppColors.lightTextSecondary),
+        selectedIconTheme: IconThemeData(color: primaryColor),
+        selectedLabelTextStyle: TextStyle(color: primaryColor, fontWeight: FontWeight.bold),
+        unselectedIconTheme: const IconThemeData(color: AppColors.lightTextSecondary),
+        unselectedLabelTextStyle: const TextStyle(color: AppColors.lightTextSecondary),
       ),
       cardTheme: CardThemeData(
         color: AppColors.lightSurface,
@@ -90,4 +99,7 @@ abstract class AppTheme {
       ),
     );
   }
+
+  static ThemeData get darkTheme => getDarkTheme();
+  static ThemeData get lightTheme => getLightTheme();
 }

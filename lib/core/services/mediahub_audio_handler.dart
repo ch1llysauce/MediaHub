@@ -69,8 +69,6 @@ class MediaHubAudioHandler extends BaseAudioHandler
     required MediaItem item,
   }) async {
     mediaItem.add(item);
-
-    await audioService.setFilePath(path);
   }
 
   @override

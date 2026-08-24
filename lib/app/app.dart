@@ -10,14 +10,14 @@ class MediaHubApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final themeMode = ref.watch(settingsControllerProvider).themeMode;
+    final settings = ref.watch(settingsControllerProvider);
 
     return MaterialApp.router(
       title: 'MediaHub',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
-      themeMode: themeMode,
+      theme: AppTheme.getLightTheme(settings.appColorScheme),
+      darkTheme: AppTheme.getDarkTheme(settings.appColorScheme),
+      themeMode: settings.themeMode,
       routerConfig: appRouter,
     );
   }

@@ -11,6 +11,7 @@ class DownloadUrlDialog extends ConsumerStatefulWidget {
   static Future<void> show(BuildContext context) {
     return showModalBottomSheet(
       context: context,
+      useRootNavigator: true,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => const DownloadUrlDialog(),
@@ -29,14 +30,20 @@ class _DownloadUrlDialogState extends ConsumerState<DownloadUrlDialog> {
   @override
   void initState() {
     super.initState();
+    _urlController.addListener(_onUrlChanged);
     // Prompt storage permission when opening download dialog
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(downloadsControllerProvider.notifier).requestStoragePermission();
     });
   }
 
+  void _onUrlChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _urlController.removeListener(_onUrlChanged);
     _urlController.dispose();
     super.dispose();
   }
@@ -113,13 +120,20 @@ class _DownloadUrlDialogState extends ConsumerState<DownloadUrlDialog> {
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
     final theme = Theme.of(context);
+    final isLandscape = mediaQuery.orientation == Orientation.landscape;
 
     return Padding(
       padding: EdgeInsets.only(
         bottom: mediaQuery.viewInsets.bottom,
       ),
       child: Container(
-        padding: const EdgeInsets.all(24.0),
+        constraints: BoxConstraints(
+          maxHeight: mediaQuery.size.height * 0.9,
+        ),
+        padding: EdgeInsets.symmetric(
+          horizontal: isLandscape ? 32.0 : 24.0,
+          vertical: isLandscape ? 12.0 : 20.0,
+        ),
         decoration: BoxDecoration(
           color: theme.colorScheme.surface,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28.0)),
@@ -178,14 +192,43 @@ class _DownloadUrlDialogState extends ConsumerState<DownloadUrlDialog> {
                   controller: _urlController,
                   keyboardType: TextInputType.url,
                   autofocus: true,
+                  onChanged: (val) {
+                    if (_errorText != null) {
+                      setState(() {
+                        _errorText = null;
+                      });
+                    }
+                  },
                   decoration: InputDecoration(
                     hintText: 'https://...',
                     errorText: _errorText,
                     prefixIcon: const Icon(Icons.link_rounded),
-                    suffixIcon: IconButton(
-                      icon: const Icon(Icons.content_paste_rounded),
-                      tooltip: 'Paste from Clipboard',
-                      onPressed: _pasteFromClipboard,
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.clear_rounded),
+                          tooltip: 'Clear input',
+                          onPressed: () {
+                            setState(() {
+                              _urlController.clear();
+                              _errorText = null;
+                            });
+                          },
+                        ),
+                        IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.content_paste_rounded),
+                          tooltip: 'Paste from Clipboard',
+                          onPressed: _pasteFromClipboard,
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                     ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(16.0),

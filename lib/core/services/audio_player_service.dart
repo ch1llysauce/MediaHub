@@ -1,9 +1,19 @@
 import 'package:just_audio/just_audio.dart';
+import 'package:audio_session/audio_session.dart';
 
 class AudioPlayerService {
   final AudioPlayer _player;
 
-  AudioPlayerService({AudioPlayer? player}) : _player = player ?? AudioPlayer();
+  AudioPlayerService({AudioPlayer? player}) : _player = player ?? AudioPlayer() {
+    _initAudioSession();
+  }
+
+  Future<void> _initAudioSession() async {
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration.music());
+    } catch (_) {}
+  }
 
   AudioPlayer get player => _player;
 

@@ -15,4 +15,5 @@ abstract class MediaRepository {
   Future<void> addScanDirectory(String path);
   Future<void> removeScanDirectory(String id);
   Future<void> updateMediaDuration(String id, int durationInSeconds);
+  Future<void> deleteMediaFile(String id, String filePath);
 }

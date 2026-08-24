@@ -6,23 +6,29 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../app/theme/app_color_scheme.dart';
+
 /// Persistent user preferences for the Settings module.
 class SettingsState {
   final ThemeMode themeMode;
+  final AppColorScheme appColorScheme;
   final String? downloadDirectory;
 
   const SettingsState({
     this.themeMode = ThemeMode.dark,
+    this.appColorScheme = AppColorScheme.teal,
     this.downloadDirectory,
   });
 
   SettingsState copyWith({
     ThemeMode? themeMode,
+    AppColorScheme? appColorScheme,
     String? downloadDirectory,
     bool clearDownloadDirectory = false,
   }) {
     return SettingsState(
       themeMode: themeMode ?? this.themeMode,
+      appColorScheme: appColorScheme ?? this.appColorScheme,
       downloadDirectory: clearDownloadDirectory
           ? null
           : (downloadDirectory ?? this.downloadDirectory),
@@ -32,6 +38,7 @@ class SettingsState {
 
 class SettingsController extends StateNotifier<SettingsState> {
   static const _themeModeKey = 'settings.themeMode';
+  static const _appColorSchemeKey = 'settings.appColorScheme';
   static const _downloadDirectoryKey = 'settings.downloadDirectory';
 
   SettingsController() : super(const SettingsState()) {
@@ -47,13 +54,20 @@ class SettingsController extends StateNotifier<SettingsState> {
             ? savedDownloadDir
             : null;
 
-    // Resolve app fallback download dir if none is persisted, so the
-    // Settings UI can always display a concrete, valid path.
     final fallbackDir = validDownloadDir ?? await _defaultDownloadDirectory();
 
     state = SettingsState(
       themeMode: _themeModeFromName(prefs.getString(_themeModeKey)),
+      appColorScheme: _colorSchemeFromName(prefs.getString(_appColorSchemeKey)),
       downloadDirectory: fallbackDir,
+    );
+  }
+
+  AppColorScheme _colorSchemeFromName(String? name) {
+    if (name == null) return AppColorScheme.teal;
+    return AppColorScheme.values.firstWhere(
+      (e) => e.name == name,
+      orElse: () => AppColorScheme.teal,
     );
   }
 
@@ -93,6 +107,12 @@ class SettingsController extends StateNotifier<SettingsState> {
     state = state.copyWith(themeMode: mode);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_themeModeKey, _themeModeName(mode));
+  }
+
+  Future<void> setColorScheme(AppColorScheme scheme) async {
+    state = state.copyWith(appColorScheme: scheme);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_appColorSchemeKey, scheme.name);
   }
 
   Future<void> setDownloadDirectory(String path) async {

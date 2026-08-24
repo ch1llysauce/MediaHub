@@ -3,10 +3,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:go_router/go_router.dart';
+
 import '../../../../core/providers/providers.dart';
 import '../../../../core/services/downloader/media_source_provider.dart';
 import '../../../../domain/entities/download_task_entity.dart';
 import '../../../player/presentation/controllers/music_player_controller.dart';
+import '../../../player/presentation/pages/full_music_player_page.dart';
 import '../controllers/downloads_controller.dart';
 import '../widgets/download_url_dialog.dart';
 
@@ -316,6 +319,76 @@ class _DownloadsPageState extends ConsumerState<DownloadsPage> {
   }
 }
 
+String _getDisplayTitle(DownloadTaskEntity task) {
+  if (task.title != null && task.title!.trim().isNotEmpty) {
+    return task.title!.trim();
+  }
+  final filename = p.basename(task.destinationPath);
+  if (!filename.startsWith('pending_') && filename.isNotEmpty) {
+    final dotIdx = filename.lastIndexOf('.');
+    final clean = dotIdx > 0 ? filename.substring(0, dotIdx) : filename;
+    if (clean.trim().isNotEmpty) {
+      return clean.replaceAll('_', ' ').trim();
+    }
+  }
+  try {
+    final uri = Uri.parse(task.url);
+    final host = uri.host.replaceFirst('www.', '');
+    if (uri.path.length > 1) {
+      final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+      if (segments.isNotEmpty) {
+        return '$host/${segments.last}';
+      }
+    }
+    return host.isNotEmpty ? host : task.url;
+  } catch (_) {
+    return task.url;
+  }
+}
+
+Future<void> _confirmAndDeleteTask(
+  BuildContext context,
+  WidgetRef ref,
+  DownloadTaskEntity task,
+) async {
+  final displayTitle = _getDisplayTitle(task);
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Delete Download & File?'),
+      content: Text(
+        'Are you sure you want to delete "$displayTitle" and remove its file from storage?\n\nThis action cannot be undone.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: const Text('Delete Permanently'),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed == true) {
+    await ref.read(downloadsControllerProvider.notifier).deleteTask(task.id);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Deleted "$displayTitle" and removed file.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+}
+
 class _DownloadTaskTile extends ConsumerWidget {
   final DownloadTaskEntity task;
 
@@ -499,7 +572,7 @@ class _DownloadTaskTile extends ConsumerWidget {
                     IconButton(
                       icon: const Icon(Icons.delete_outline_rounded),
                       tooltip: 'Delete Task',
-                      onPressed: () => controller.deleteTask(task.id),
+                      onPressed: () => _confirmAndDeleteTask(context, ref, task),
                     ),
                 ],
               ),
@@ -795,11 +868,9 @@ class _DownloadDetailsModal extends ConsumerWidget {
                           borderRadius: BorderRadius.circular(14),
                         ),
                       ),
-                      onPressed: () {
-                        ref
-                            .read(downloadsControllerProvider.notifier)
-                            .deleteTask(task.id);
+                      onPressed: () async {
                         Navigator.of(context).pop();
+                        await _confirmAndDeleteTask(context, ref, task);
                       },
                       icon: const Icon(Icons.delete_outline_rounded),
                       label: const Text('Delete'),
@@ -827,9 +898,16 @@ class _DownloadDetailsModal extends ConsumerWidget {
                                 ? allMedia.first
                                 : throw Exception('File not in library'),
                           );
-                          ref
-                              .read(musicPlayerControllerProvider.notifier)
-                              .playItem(mediaItem);
+                          if (mediaItem.isVideo && context.mounted) {
+                            context.pushNamed('videoPlayer', extra: mediaItem);
+                          } else {
+                            ref
+                                .read(musicPlayerControllerProvider.notifier)
+                                .playItem(mediaItem);
+                            if (context.mounted) {
+                              FullMusicPlayerPage.open(context);
+                            }
+                          }
                         },
                         icon: const Icon(Icons.play_arrow_rounded),
                         label: const Text('Play Media'),

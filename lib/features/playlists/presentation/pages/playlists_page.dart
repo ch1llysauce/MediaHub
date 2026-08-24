@@ -147,7 +147,7 @@ class PlaylistsPage extends ConsumerWidget {
             ),
             subtitle: const Text('Your favorited audio tracks & videos'),
             trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () => context.pushNamed('favorites'),
+            onTap: () => context.goNamed('favorites'),
           ),
           ListTile(
             leading: Container(
@@ -168,7 +168,7 @@ class PlaylistsPage extends ConsumerWidget {
             ),
             subtitle: const Text('Recently played songs & videos'),
             trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () => context.pushNamed('history'),
+            onTap: () => context.goNamed('history'),
           ),
           const Divider(height: 1),
           Expanded(
@@ -209,13 +209,15 @@ class PlaylistsPage extends ConsumerWidget {
             );
           }
 
+          final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+
           return GridView.builder(
             padding: const EdgeInsets.only(left: 16, right: 16, top: 16, bottom: 88),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: isLandscape ? 3 : 2,
               crossAxisSpacing: 16,
               mainAxisSpacing: 16,
-              childAspectRatio: 0.85,
+              childAspectRatio: isLandscape ? 1.05 : 0.85,
             ),
             itemCount: playlists.length,
             itemBuilder: (context, index) {

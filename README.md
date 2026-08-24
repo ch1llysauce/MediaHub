@@ -263,10 +263,10 @@ Optional media file backup and cross-device sync (Media Upload, Cloud Storage, M
 | **Navigation** | **GoRouter** | Declarative route management |
 | **Local Database** | **Drift + SQLite** | Type-safe persistent metadata storage |
 | **Audio Engine** | **`just_audio`** | Local audio playback engine |
-| **Background Audio** | **`audio_service`** | System media controls & background playback |
-| **Video Engine** | **`media_kit`** | Native video playback engine |
+| **Background Audio & Focus** | **`audio_service` + `audio_session`** | System media controls, background playback & audio focus management |
+| **Video Engine & PiP** | **`media_kit` + `floating`** | Native video playback engine & Android Picture-in-Picture mode |
 | **Networking** | **Dio** | HTTP client for media resolution & downloading |
-| **Filesystem** | **`path_provider` + `dart:io`** | Directory detection & local file management |
+| **Metadata & Filesystem** | **`audio_metadata_reader` + `path_provider`** | Fast zero-overhead ID3 tag parsing & directory detection |
 
 ---
 

@@ -35,6 +35,7 @@ class DownloadManager {
              YoutubeSourceProvider(),
              TikTokSourceProvider(),
              InstagramSourceProvider(),
+             TwitterSourceProvider(),
              FacebookSourceProvider(),
              GenericSocialMediaProvider(),
            ];
@@ -224,19 +225,30 @@ class DownloadManager {
         ),
       );
 
-      final streamUrlLower = mediaInfo.streamUrl.toLowerCase();
+      final streamUri = Uri.tryParse(mediaInfo.streamUrl);
+      final streamHost = streamUri?.host.toLowerCase() ?? '';
 
       String referer;
 
-      if (streamUrlLower.contains('instagram') ||
-          streamUrlLower.contains('cdninstagram')) {
+      if (streamHost.contains('cdninstagram.com') ||
+          streamHost == 'instagram.com' ||
+          streamHost.endsWith('.instagram.com')) {
         referer = 'https://www.instagram.com/';
-      } else if (streamUrlLower.contains('facebook') ||
-          streamUrlLower.contains('fbcdn')) {
+      } else if (streamHost.contains('twimg.com') ||
+          streamHost == 'twitter.com' ||
+          streamHost.endsWith('.twitter.com') ||
+          streamHost == 'x.com' ||
+          streamHost.endsWith('.x.com')) {
+        referer = 'https://x.com/';
+      } else if (streamHost.contains('fbcdn.net') ||
+          streamHost == 'facebook.com' ||
+          streamHost.endsWith('.facebook.com')) {
         referer = 'https://www.facebook.com/';
-      } else if (streamUrlLower.contains('tiktok') ||
-          streamUrlLower.contains('tikwm')) {
+      } else if (streamHost.contains('tiktok.com') ||
+          streamHost.contains('tikwm.com')) {
         referer = 'https://www.tiktok.com/';
+      } else if (streamUri != null && streamUri.scheme.startsWith('http')) {
+        referer = '${streamUri.scheme}://${streamUri.host}/';
       } else {
         referer = 'https://www.google.com/';
       }
@@ -375,6 +387,10 @@ class DownloadManager {
 
       await _downloadRepository.updateStatus(taskId, DownloadStatus.completed);
 
+      try {
+        await file.setLastModified(DateTime.now());
+      } catch (_) {}
+
       // Add downloaded media to library.
       unawaited(_mediaRepository.scanSingleFile(targetPath));
       if (Platform.isAndroid) {
@@ -498,7 +514,7 @@ class DownloadManager {
     await _downloadRepository.updateStatus(taskId, DownloadStatus.cancelled);
   }
 
-  /// Delete download task record and remove partially downloaded file
+  /// Delete download task record, remove physical file from storage, and clean up library record
   Future<void> deleteTask(String taskId) async {
     final task = await _downloadRepository.getTaskById(taskId);
     if (task != null) {
@@ -508,6 +524,10 @@ class DownloadManager {
         try {
           await file.delete();
         } catch (_) {}
+      }
+      final media = await _mediaRepository.getMediaByPath(task.destinationPath);
+      if (media != null) {
+        await _mediaRepository.deleteMediaFile(media.id, task.destinationPath);
       }
       await _downloadRepository.deleteTask(taskId);
     }

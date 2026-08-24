@@ -2,9 +2,9 @@ import 'dart:async';
 import 'dart:io';
 import 'package:path/path.dart' as p;
 
-import 'package:just_audio/just_audio.dart';
-import 'package:media_kit/media_kit.dart';
+import 'package:audio_metadata_reader/audio_metadata_reader.dart';
 
+import '../../core/services/media_artwork_service.dart';
 import '../../core/services/media_scanner_service.dart';
 import '../../domain/entities/media_item_entity.dart';
 import '../../domain/entities/scan_directory_entity.dart';
@@ -105,8 +105,9 @@ class MediaRepositoryImpl implements MediaRepository {
     // Reconcile and mark missing files as unavailable based on physical storage check
     await _mediaDao.reconcileMissingFiles();
 
-    // Run background duration extraction asynchronously without delaying UI scan completion
+    // Run background duration and artwork extractions asynchronously without delaying UI scan completion
     unawaited(_populateAllMissingDurations());
+    unawaited(_populateAllMissingArtworks());
   }
 
   @override
@@ -124,10 +125,49 @@ class MediaRepositoryImpl implements MediaRepository {
         title: fallbackTitle,
         mediaType: mediaType,
         fileSize: stat.size,
+        dateAdded: stat.modified,
       );
 
       final companion = await _scannerService.toCompanion(scannedFile);
       await _mediaDao.upsertMedia(companion);
+
+      final artworkPath = await _artworkService.extractArtwork(
+        filePath: filePath,
+        mediaId: companion.id.value,
+        mediaType: mediaType,
+      );
+      if (artworkPath != null) {
+        await _mediaDao.updateMediaArtwork(companion.id.value, artworkPath);
+      }
+    } catch (_) {}
+  }
+
+  final MediaArtworkService _artworkService = MediaArtworkService();
+
+  Future<void> _populateAllMissingArtworks() async {
+    try {
+      final allMedia = await _mediaDao.getAllMedia();
+      final missingArtworks = allMedia
+          .where((m) => m.artworkPath == null || m.artworkPath!.isEmpty)
+          .toList();
+
+      if (missingArtworks.isNotEmpty) {
+        for (final media in missingArtworks) {
+          try {
+            final file = File(media.path);
+            if (await file.exists()) {
+              final artworkPath = await _artworkService.extractArtwork(
+                filePath: media.path,
+                mediaId: media.id,
+                mediaType: media.mediaType,
+              );
+              if (artworkPath != null) {
+                await _mediaDao.updateMediaArtwork(media.id, artworkPath);
+              }
+            }
+          } catch (_) {}
+        }
+      }
     } catch (_) {}
   }
 
@@ -135,35 +175,19 @@ class MediaRepositoryImpl implements MediaRepository {
     try {
       final allMedia = await _mediaDao.getAllMedia();
       final missingAudio = allMedia.where((m) => m.mediaType == 'audio' && (m.duration == null || m.duration == 0)).toList();
-      final missingVideo = allMedia.where((m) => m.mediaType == 'video' && (m.duration == null || m.duration == 0)).toList();
 
       if (missingAudio.isNotEmpty) {
-        final audioPlayer = AudioPlayer();
         for (final media in missingAudio) {
           try {
-            final dur = await audioPlayer.setFilePath(media.path).timeout(const Duration(seconds: 1));
-            if (dur != null && dur.inSeconds > 0) {
-              await _mediaDao.updateMediaDuration(media.id, dur.inSeconds);
+            final file = File(media.path);
+            if (await file.exists()) {
+              final metadata = readMetadata(file);
+              if (metadata.duration != null && metadata.duration!.inSeconds > 0) {
+                await _mediaDao.updateMediaDuration(media.id, metadata.duration!.inSeconds);
+              }
             }
           } catch (_) {}
         }
-        await audioPlayer.dispose();
-      }
-
-      if (missingVideo.isNotEmpty) {
-        final videoPlayer = Player();
-        for (final media in missingVideo) {
-          try {
-            await videoPlayer.open(Media(media.path), play: false);
-            final dur = await videoPlayer.stream.duration
-                .firstWhere((d) => d.inSeconds > 0)
-                .timeout(const Duration(milliseconds: 800));
-            if (dur.inSeconds > 0) {
-              await _mediaDao.updateMediaDuration(media.id, dur.inSeconds);
-            }
-          } catch (_) {}
-        }
-        await videoPlayer.dispose();
       }
     } catch (_) {}
   }
@@ -200,5 +224,16 @@ class MediaRepositoryImpl implements MediaRepository {
   @override
   Future<void> updateMediaDuration(String id, int durationInSeconds) async {
     await _mediaDao.updateMediaDuration(id, durationInSeconds);
+  }
+
+  @override
+  Future<void> deleteMediaFile(String id, String filePath) async {
+    try {
+      final file = File(filePath);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
+    await _mediaDao.deleteMediaRecord(id);
   }
 }

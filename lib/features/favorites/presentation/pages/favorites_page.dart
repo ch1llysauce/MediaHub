@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../../domain/entities/media_item_entity.dart';
+import '../../../player/presentation/pages/full_music_player_page.dart';
+import '../../../player/presentation/pages/video_player_page.dart';
+import 'package:mediahub/shared/media_item_options_modal.dart';
 import '../../../library/presentation/widgets/media_item_tile.dart';
-import '../../../playlists/presentation/widgets/add_to_playlist_dialog.dart';
 import '../../../player/presentation/controllers/music_player_controller.dart';
 import '../controllers/favorites_controller.dart';
 
@@ -187,14 +190,8 @@ class _FavoritesPageState extends ConsumerState<FavoritesPage> {
                           final item = filteredItems[index];
                           return MediaItemTile(
                             item: item,
-                            onTap: () {
-                              ref.read(musicPlayerControllerProvider.notifier).playItem(
-                                    item,
-                                    queue: filteredItems,
-                                    playlistId: 'favorites',
-                                  );
-                            },
-                            onMoreTap: () => AddToPlaylistDialog.show(context, item),
+                            onTap: () => _onMediaItemTap(context, ref, item, filteredItems),
+                            onMoreTap: () => MediaItemOptionsModal.show(context, item),
                           );
                         },
                       ),
@@ -208,5 +205,28 @@ class _FavoritesPageState extends ConsumerState<FavoritesPage> {
         ),
       ),
     );
+  }
+
+  void _onMediaItemTap(
+    BuildContext context,
+    WidgetRef ref,
+    MediaItemEntity item,
+    List<MediaItemEntity> queue,
+  ) {
+    if (item.mediaType == 'video') {
+      Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute(
+          builder: (context) => VideoPlayerPage(
+            item: item,
+            playlist: queue,
+          ),
+        ),
+      );
+    } else {
+      ref
+          .read(musicPlayerControllerProvider.notifier)
+          .playItem(item, queue: queue, playlistId: 'favorites');
+      FullMusicPlayerPage.open(context);
+    }
   }
 }

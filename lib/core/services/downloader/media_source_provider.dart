@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as developer;
 import 'package:dio/dio.dart';
 import 'package:html/parser.dart' as html_parser;
@@ -257,288 +258,442 @@ class InstagramSourceProvider implements MediaSourceProvider {
   @override
   Future<MediaSourceInfo> resolve(Uri url, {bool audioOnly = false}) async {
     InstagramResolutionDebugLog.start();
-    _logInstagramResolution('Started public media resolution.');
+    _logInstagramResolution('Started fast parallel Instagram resolution.');
 
     final dio = Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 12),
-      receiveTimeout: const Duration(seconds: 12),
+      connectTimeout: const Duration(seconds: 6),
+      receiveTimeout: const Duration(seconds: 6),
       followRedirects: true,
       validateStatus: (status) => status != null && status < 500,
     ));
 
     var targetUrl = url.toString();
-    /* try {
-      // Follow redirects first to resolve any shortened links (e.g. instagr.am)
-      final headResponse = await dio.head(
-        targetUrl,
-        options: Options(headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }),
-      );
-      if (headResponse.realUri.toString().isNotEmpty) {
-        targetUrl = headResponse.realUri.toString();
-      }
-    } catch (_) {}
-    */
-
-    // Clean query parameters from resolved URL
     final cleanUri = Uri.parse(targetUrl).removeFragment().replace(queryParameters: {});
     final canonicalUrl = cleanUri.toString();
-    // Strategy 0: facebookexternalhit crawler (exactly mirroring Facebook resolution)
+
     final targetUrls = [canonicalUrl];
     if (canonicalUrl.contains('instagram.com') && !canonicalUrl.contains('m.instagram.com')) {
       targetUrls.add(canonicalUrl.replaceFirst('instagram.com', 'm.instagram.com'));
     }
-    _logInstagramResolution('Trying crawler metadata on ${targetUrls.length} public page variant(s).');
 
-    for (final target in targetUrls) {
-      try {
-        final response = await dio.get<String>(
-          target,
-          options: Options(
-            followRedirects: true,
-            maxRedirects: 10,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-    'AppleWebKit/537.36 (KHTML, like Gecko) '
-    'Chrome/120.0.0.0 Safari/537.36',
-              'Accept-Language': 'en-US,en;q=0.9',
-            },
-          ),
-        );
-        _logInstagramResolution(
-          'Crawler response received: HTTP ${response.statusCode}; '
-          'body length ${response.data?.length ?? 0}.',
-        );
-        if (response.data != null && response.data!.isNotEmpty) {
-          final document = html_parser.parse(response.data!);
-          final videoMeta = document.querySelector('meta[property="og:video"]') ??
-              document.querySelector('meta[property="og:video:secure_url"]')??
-              document.querySelector('meta[property="og:video:url"]') ??
-              document.querySelector('meta[name="twitter:player:stream"]');
-          if (videoMeta?.attributes['content'] != null && videoMeta!.attributes['content']!.isNotEmpty) {
-            final videoUrl = videoMeta.attributes['content']!;
-            final titleMeta = document.querySelector('meta[property="og:title"]');
-            var title = titleMeta?.attributes['content'] ?? 'Instagram Video';
-            title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
-            if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
-
-            _logInstagramResolution('Resolved stream from crawler metadata.');
-
-            return MediaSourceInfo(
-              title: title,
-              streamUrl: videoUrl,
-              mediaType: audioOnly ? 'audio' : 'video',
-              fileExtension: audioOnly ? '.mp3' : '.mp4',
-            );
-          }
-        }
-      } catch (e) {
-        _logInstagramResolution('Crawler request failed: ${e.runtimeType}.');
-      }
-    }
-
-    // Strategy 1: Official Instagram Embed Scraper (Direct and independent)
-    _logInstagramResolution('Trying Instagram embed metadata.');
-    try {
-      final embedUrl = canonicalUrl.endsWith('/') ? '${canonicalUrl}embed/' : '$canonicalUrl/embed/';
-      final response = await dio.get<String>(
-        embedUrl,
-        options: Options(headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept-Language': 'en-US,en;q=0.9',
-        }),
-      );
-      _logInstagramResolution('Embed response received: HTTP ${response.statusCode}.');
-      if (response.statusCode == 200 && response.data != null) {
-        final body = response.data!;
-        // Match any direct cdninstagram video URL
-        final mp4Regex = RegExp(r'https?:\\?/\\?/[^"\s\\]+?cdninstagram\.com[^"\s\\]+?\.mp4[^"\s\\]*');
-        final match = mp4Regex.firstMatch(body);
-        if (match != null && match.group(0) != null) {
-          final cleanVideoUrl = _cleanEscapedUrl(match.group(0)!);
-          if (cleanVideoUrl.isNotEmpty) {
-            final document = html_parser.parse(body);
-            final titleMeta = document.querySelector('title');
-            var title = titleMeta?.text ?? 'Instagram Video';
-            title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
-            if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
-
-            _logInstagramResolution('Resolved stream from embed metadata.');
-
-            return MediaSourceInfo(
-              title: title,
-              streamUrl: cleanVideoUrl,
-              mediaType: audioOnly ? 'audio' : 'video',
-              fileExtension: audioOnly ? '.mp3' : '.mp4',
-            );
-          }
-        }
-      }
-    } catch (e) {
-      _logInstagramResolution('Embed request failed: ${e.runtimeType}.');
-    }
-
-    // Recent public Instagram pages commonly expose the media URL in embedded
-    // JSON instead of an OpenGraph video tag. Try it before relying on an
-    // external mirror, which can be unavailable or blocked independently.
-    _logInstagramResolution('Trying embedded public page data.');
-    for (final target in targetUrls) {
-      try {
-        final response = await dio.get<String>(
-          target,
-          options: Options(headers: {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-          }),
-        );
-        final result = _parseInstagramPublicPage(
-          response.data,
-        );
-        if (result != null) {
-          _logInstagramResolution('Resolved stream from embedded public page data.');
-          return result;
-        }
-      } catch (e) {
-        _logInstagramResolution('Public page parser failed: ${e.runtimeType}.');
-      }
-    }
-
-    // Strategy 2: OpenGraph Mirrors (vxinstagram, instagramez, eeinstagram)
     final proxyDomains = [
+      'ddinstagram.com',
       'vxinstagram.com',
       'instagramez.com',
       'eeinstagram.com',
+      'kkinstagram.com',
+      'fxinstagram.com',
+      'iginstagram.com',
+      'gramfix.com',
+      'distagram.com',
+      'ddinstagram.org',
     ];
 
-    for (final proxy in proxyDomains) {
-      _logInstagramResolution('Trying public metadata mirror: $proxy.');
-      try {
-        var proxyUrl = canonicalUrl;
-        if (proxyUrl.contains('www.instagram.com')) {
-          proxyUrl = proxyUrl.replaceAll('www.instagram.com', proxy);
-        } else {
-          proxyUrl = proxyUrl.replaceAll('instagram.com', proxy);
+    // Extract shortcode for direct web API strategies
+    final shortcodeMatch = RegExp(r'/(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)').firstMatch(canonicalUrl);
+    final shortcode = shortcodeMatch?.group(1);
+
+    final completer = Completer<MediaSourceInfo>();
+    int pendingTasks = 0;
+
+    void submitTask(Future<MediaSourceInfo?> taskFuture, String strategyName) {
+      pendingTasks++;
+      taskFuture.then((result) {
+        if (result != null && !completer.isCompleted) {
+          _logInstagramResolution('FIRST-WIN [$strategyName]: Successfully resolved video stream.');
+          completer.complete(result);
+        } else if (result == null) {
+          _logInstagramResolution('FAILED [$strategyName]: No stream found in payload.');
         }
-
-        final response = await dio.get<String>(
-          proxyUrl,
-          options: Options(headers: {
-            'User-Agent': 'Discordbot/2.0',
-          }),
-        );
-
-        if (response.statusCode == 200 && response.data != null) {
-          final html = response.data!;
-          final document = html_parser.parse(html);
-          final videoMeta = document.querySelector('meta[property="og:video"]') ??
-              document.querySelector('meta[property="og:video:secure_url"]')??
-              document.querySelector('meta[property="og:video:url"]') ??
-              document.querySelector('meta[name="twitter:player:stream"]');
-          if (videoMeta?.attributes['content'] != null && videoMeta!.attributes['content']!.isNotEmpty) {
-            final videoUrl = videoMeta.attributes['content']!;
-            final titleMeta = document.querySelector('meta[property="og:title"]');
-            var title = titleMeta?.attributes['content'] ?? 'Instagram Video';
-            title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
-            if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
-
-            _logInstagramResolution('Resolved stream from public metadata mirror: $proxy.');
-
-            return MediaSourceInfo(
-              title: title,
-              streamUrl: videoUrl,
-              mediaType: audioOnly ? 'audio' : 'video',
-              fileExtension: audioOnly ? '.mp3' : '.mp4',
-            );
-          }
+      }).catchError((err) {
+        _logInstagramResolution('ERROR [$strategyName]: $err');
+      }).whenComplete(() {
+        pendingTasks--;
+        if (pendingTasks <= 0 && !completer.isCompleted) {
+          _logInstagramResolution('All parallel strategies finished for this pass.');
         }
-      } catch (e) {
-        _logInstagramResolution('Metadata mirror $proxy failed: ${e.runtimeType}.');
-      }
+      });
     }
 
-    // Strategy 3: SaveIG API
-    _logInstagramResolution('Trying SaveIG resolver.');
-    try {
-      final response = await dio.post(
-        'https://saveig.app/api/ajaxSearch',
-        data: 'q=${Uri.encodeComponent(canonicalUrl)}&vt=instagram',
-        options: Options(
-          contentType: Headers.formUrlEncodedContentType,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Origin': 'https://saveig.app',
-            'Referer': 'https://saveig.app/',
-          },
-        ),
-      );
-
-      if (response.statusCode == 200 && response.data != null) {
-        String htmlContent = '';
-        if (response.data is Map && (response.data as Map)['data'] != null) {
-          htmlContent = (response.data as Map)['data'].toString();
-        } else if (response.data is String) {
-          htmlContent = response.data as String;
-        }
-
-        if (htmlContent.isNotEmpty) {
-          final unpackedHtml = _unpackIfNeeded(htmlContent);
-          final result = _parseFbExtractorHtml(unpackedHtml, audioOnly: audioOnly);
-          if (result != null) {
-            _logInstagramResolution('Resolved stream from SaveIG resolver.');
-            return MediaSourceInfo(
-              title: result.title == 'Facebook Video' ? 'Instagram Video' : result.title,
-              streamUrl: result.streamUrl,
-              mediaType: result.mediaType,
-              fileExtension: result.fileExtension,
-              thumbnailUrl: result.thumbnailUrl,
-              availableQualities: result.availableQualities,
+    // ─────────────────────────────────────────────────────────────
+    // STRATEGY 0: Crawler Metadata on public page variants
+    // ─────────────────────────────────────────────────────────────
+    for (final target in targetUrls) {
+      submitTask(
+        Future(() async {
+          try {
+            final response = await dio.get<String>(
+              target,
+              options: Options(headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+              }),
             );
-          }
-        }
-      }
-    } catch (e) {
-      _logInstagramResolution('SaveIG resolver failed: ${e.runtimeType}.');
+            if (response.data != null && response.data!.isNotEmpty) {
+              final document = html_parser.parse(response.data!);
+              final videoMeta = document.querySelector('meta[property="og:video"]') ??
+                  document.querySelector('meta[property="og:video:secure_url"]') ??
+                  document.querySelector('meta[property="og:video:url"]') ??
+                  document.querySelector('meta[name="twitter:player:stream"]');
+              if (videoMeta?.attributes['content'] != null && videoMeta!.attributes['content']!.isNotEmpty) {
+                final videoUrl = videoMeta.attributes['content']!;
+                final titleMeta = document.querySelector('meta[property="og:title"]');
+                var title = titleMeta?.attributes['content'] ?? 'Instagram Video';
+                title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
+                if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
+
+                return MediaSourceInfo(
+                  title: title,
+                  streamUrl: videoUrl,
+                  mediaType: audioOnly ? 'audio' : 'video',
+                  fileExtension: audioOnly ? '.mp3' : '.mp4',
+                );
+              }
+            }
+          } catch (_) {}
+          return null;
+        }),
+        'Crawler Metadata ($target)',
+      );
     }
 
-    // Strategy 4: SnapSave API
-    _logInstagramResolution('Trying SnapSave resolver.');
-    try {
-      final snapResponse = await dio.post<String>(
-        'https://snapsave.app/action.php?lang=en',
-        data: 'url=${Uri.encodeComponent(canonicalUrl)}',
-        options: Options(
-          contentType: Headers.formUrlEncodedContentType,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'X-Requested-With': 'XMLHttpRequest',
-            'Origin': 'https://snapsave.app',
-            'Referer': 'https://snapsave.app/',
-          },
-        ),
-      );
-
-      if (snapResponse.statusCode == 200 && snapResponse.data != null) {
-        final unpackedHtml = _unpackIfNeeded(snapResponse.data!);
-        final result = _parseFbExtractorHtml(unpackedHtml, audioOnly: audioOnly);
-        if (result != null) {
-          _logInstagramResolution('Resolved stream from SnapSave resolver.');
-          return MediaSourceInfo(
-            title: result.title == 'Facebook Video' ? 'Instagram Video' : result.title,
-            streamUrl: result.streamUrl,
-            mediaType: result.mediaType,
-            fileExtension: result.fileExtension,
-            thumbnailUrl: result.thumbnailUrl,
-            availableQualities: result.availableQualities,
+    // ─────────────────────────────────────────────────────────────
+    // STRATEGY 1: Official Instagram Embed Scraper
+    // ─────────────────────────────────────────────────────────────
+    submitTask(
+      Future(() async {
+        try {
+          final embedUrl = canonicalUrl.endsWith('/') ? '${canonicalUrl}embed/' : '$canonicalUrl/embed/';
+          final response = await dio.get<String>(
+            embedUrl,
+            options: Options(headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept-Language': 'en-US,en;q=0.9',
+            }),
           );
-        }
-      }
-    } catch (e) {
-      _logInstagramResolution('SnapSave resolver failed: ${e.runtimeType}.');
+          if (response.statusCode == 200 && response.data != null) {
+            final body = response.data!;
+            final mp4Regex = RegExp(r'https?:\\?/\\?/[^"\s\\]+?cdninstagram\.com[^"\s\\]+?\.mp4[^"\s\\]*');
+            final match = mp4Regex.firstMatch(body);
+            if (match != null && match.group(0) != null) {
+              final cleanVideoUrl = _cleanEscapedUrl(match.group(0)!);
+              if (cleanVideoUrl.isNotEmpty) {
+                final document = html_parser.parse(body);
+                final titleMeta = document.querySelector('title');
+                var title = titleMeta?.text ?? 'Instagram Video';
+                title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
+                if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
+
+                return MediaSourceInfo(
+                  title: title,
+                  streamUrl: cleanVideoUrl,
+                  mediaType: audioOnly ? 'audio' : 'video',
+                  fileExtension: audioOnly ? '.mp3' : '.mp4',
+                );
+              }
+            }
+          }
+        } catch (_) {}
+        return null;
+      }),
+      'Embed Scraper',
+    );
+
+    // ─────────────────────────────────────────────────────────────
+    // STRATEGY 2: Embedded Public Page Data (JSON Parser)
+    // ─────────────────────────────────────────────────────────────
+    for (final target in targetUrls) {
+      submitTask(
+        Future(() async {
+          try {
+            final response = await dio.get<String>(
+              target,
+              options: Options(headers: {
+                'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+              }),
+            );
+            return _parseInstagramPublicPage(response.data);
+          } catch (_) {}
+          return null;
+        }),
+        'Embedded JSON Parser ($target)',
+      );
     }
 
-    _logInstagramResolution('No public stream was resolved; using the generic fallback.');
+    // ─────────────────────────────────────────────────────────────
+    // STRATEGY 3: OpenGraph Parallel Proxy Mirrors (All 10 Domains)
+    // ─────────────────────────────────────────────────────────────
+    for (final proxy in proxyDomains) {
+      submitTask(
+        Future(() async {
+          try {
+            var proxyUrl = canonicalUrl;
+            if (shortcode != null && shortcode.isNotEmpty) {
+              proxyUrl = 'https://$proxy/reel/$shortcode/';
+            } else {
+              proxyUrl = proxyUrl.replaceAll(RegExp(r'(www\.)?instagram\.com'), proxy);
+            }
+
+            final response = await dio.get<String>(
+              proxyUrl,
+              options: Options(headers: {
+                'User-Agent': 'Discordbot/2.0',
+              }),
+            );
+
+            if (response.statusCode == 200 && response.data != null) {
+              final html = response.data!;
+              final document = html_parser.parse(html);
+              final videoMeta = document.querySelector('meta[property="og:video"]') ??
+                  document.querySelector('meta[property="og:video:secure_url"]') ??
+                  document.querySelector('meta[property="og:video:url"]') ??
+                  document.querySelector('meta[name="twitter:player:stream"]');
+              if (videoMeta?.attributes['content'] != null && videoMeta!.attributes['content']!.isNotEmpty) {
+                final videoUrl = videoMeta.attributes['content']!;
+                final titleMeta = document.querySelector('meta[property="og:title"]');
+                var title = titleMeta?.attributes['content'] ?? 'Instagram Video';
+                title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
+                if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
+
+                return MediaSourceInfo(
+                  title: title,
+                  streamUrl: videoUrl,
+                  mediaType: audioOnly ? 'audio' : 'video',
+                  fileExtension: audioOnly ? '.mp3' : '.mp4',
+                );
+              }
+            }
+          } catch (_) {}
+          return null;
+        }),
+        'Mirror Proxy ($proxy)',
+      );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // STRATEGY 4: SaveIG API
+    // ─────────────────────────────────────────────────────────────
+    submitTask(
+      Future(() async {
+        try {
+          final response = await dio.post(
+            'https://saveig.app/api/ajaxSearch',
+            data: 'q=${Uri.encodeComponent(canonicalUrl)}&vt=instagram',
+            options: Options(
+              contentType: Headers.formUrlEncodedContentType,
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Origin': 'https://saveig.app',
+                'Referer': 'https://saveig.app/',
+              },
+            ),
+          );
+
+          if (response.statusCode == 200 && response.data != null) {
+            String htmlContent = '';
+            if (response.data is Map && (response.data as Map)['data'] != null) {
+              htmlContent = (response.data as Map)['data'].toString();
+            } else if (response.data is String) {
+              htmlContent = response.data as String;
+            }
+
+            if (htmlContent.isNotEmpty) {
+              final unpackedHtml = _unpackIfNeeded(htmlContent);
+              final result = _parseFbExtractorHtml(unpackedHtml, audioOnly: audioOnly);
+              if (result != null) {
+                return MediaSourceInfo(
+                  title: result.title == 'Facebook Video' ? 'Instagram Video' : result.title,
+                  streamUrl: result.streamUrl,
+                  mediaType: result.mediaType,
+                  fileExtension: result.fileExtension,
+                  thumbnailUrl: result.thumbnailUrl,
+                  availableQualities: result.availableQualities,
+                );
+              }
+            }
+          }
+        } catch (_) {}
+        return null;
+      }),
+      'SaveIG API',
+    );
+
+    // ─────────────────────────────────────────────────────────────
+    // STRATEGY 5: SnapSave API
+    // ─────────────────────────────────────────────────────────────
+    submitTask(
+      Future(() async {
+        try {
+          final snapResponse = await dio.post<String>(
+            'https://snapsave.app/action.php?lang=en',
+            data: 'url=${Uri.encodeComponent(canonicalUrl)}',
+            options: Options(
+              contentType: Headers.formUrlEncodedContentType,
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Origin': 'https://snapsave.app',
+                'Referer': 'https://snapsave.app/',
+              },
+            ),
+          );
+
+          if (snapResponse.statusCode == 200 && snapResponse.data != null) {
+            final unpackedHtml = _unpackIfNeeded(snapResponse.data!);
+            final result = _parseFbExtractorHtml(unpackedHtml, audioOnly: audioOnly);
+            if (result != null) {
+              return MediaSourceInfo(
+                title: result.title == 'Facebook Video' ? 'Instagram Video' : result.title,
+                streamUrl: result.streamUrl,
+                mediaType: result.mediaType,
+                fileExtension: result.fileExtension,
+                thumbnailUrl: result.thumbnailUrl,
+                availableQualities: result.availableQualities,
+              );
+            }
+          }
+        } catch (_) {}
+        return null;
+      }),
+      'SnapSave API',
+    );
+
+    // ─────────────────────────────────────────────────────────────
+    // STRATEGY 6: SSSInstagram API
+    // ─────────────────────────────────────────────────────────────
+    submitTask(
+      Future(() async {
+        try {
+          final response = await dio.post<Map<String, dynamic>>(
+            'https://sssinstagram.com/api/convert',
+            data: {'url': canonicalUrl},
+            options: Options(headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Accept': 'application/json',
+            }),
+          );
+          if (response.statusCode == 200 && response.data != null) {
+            final data = response.data!;
+            if (data['url'] is List && (data['url'] as List).isNotEmpty) {
+              final first = (data['url'] as List).first as Map;
+              final streamUrl = first['url']?.toString();
+              if (streamUrl != null && streamUrl.isNotEmpty) {
+                return MediaSourceInfo(
+                  title: 'Instagram Video',
+                  streamUrl: streamUrl,
+                  mediaType: audioOnly ? 'audio' : 'video',
+                  fileExtension: audioOnly ? '.mp3' : '.mp4',
+                );
+              }
+            }
+          }
+        } catch (_) {}
+        return null;
+      }),
+      'SSSInstagram API',
+    );
+
+    // ─────────────────────────────────────────────────────────────
+    // STRATEGY 7: Instagram Web API (__a=1 with X-IG-App-ID)
+    // ─────────────────────────────────────────────────────────────
+    if (shortcode != null && shortcode.isNotEmpty) {
+      submitTask(
+        Future(() async {
+          try {
+            final apiResponse = await dio.get<Map<String, dynamic>>(
+              'https://www.instagram.com/p/$shortcode/?__a=1&__d=dis',
+              options: Options(headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'X-IG-App-ID': '936619743392459',
+                'X-Requested-With': 'XMLHttpRequest',
+              }),
+            );
+            if (apiResponse.statusCode == 200 && apiResponse.data != null) {
+              final data = apiResponse.data!;
+              final items = data['items'] as List?;
+              if (items != null && items.isNotEmpty) {
+                final item = items.first as Map;
+                final videoVersions = item['video_versions'] as List?;
+                if (videoVersions != null && videoVersions.isNotEmpty) {
+                  final bestVideo = videoVersions.first as Map;
+                  final streamUrl = bestVideo['url']?.toString();
+                  if (streamUrl != null && streamUrl.isNotEmpty) {
+                    final caption = item['caption']?['text']?.toString() ?? 'Instagram Video';
+                    var title = caption.split('\n').first;
+                    title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
+                    if (title.isEmpty) title = 'instagram_${DateTime.now().millisecondsSinceEpoch}';
+
+                    return MediaSourceInfo(
+                      title: title,
+                      streamUrl: streamUrl,
+                      mediaType: audioOnly ? 'audio' : 'video',
+                      fileExtension: audioOnly ? '.mp3' : '.mp4',
+                    );
+                  }
+                }
+              }
+            }
+          } catch (_) {}
+          return null;
+        }),
+        'Instagram Web API (__a=1)',
+      );
+
+      // ─────────────────────────────────────────────────────────────
+      // STRATEGY 8: Cobalt Engine API (High Quality Multi-Host)
+      // ─────────────────────────────────────────────────────────────
+      for (final cobaltHost in ['api.cobalt.tools', 'co.wuk.sh']) {
+        submitTask(
+          Future(() async {
+            try {
+              final cobaltResponse = await dio.post<Map<String, dynamic>>(
+                'https://$cobaltHost/api/json',
+                data: {
+                  'url': canonicalUrl,
+                  'videoQuality': 'max',
+                },
+                options: Options(headers: {
+                  'Accept': 'application/json',
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                }),
+              );
+              if (cobaltResponse.statusCode == 200 && cobaltResponse.data != null) {
+                final data = cobaltResponse.data!;
+                String? streamUrl = data['url']?.toString();
+                if ((streamUrl == null || streamUrl.isEmpty) && data['picker'] is List && (data['picker'] as List).isNotEmpty) {
+                  final firstItem = (data['picker'] as List).first;
+                  if (firstItem is Map) {
+                    streamUrl = firstItem['url']?.toString();
+                  }
+                }
+                if (streamUrl != null && streamUrl.isNotEmpty) {
+                  final title = data['filename']?.toString() ?? 'Instagram Video';
+                  return MediaSourceInfo(
+                    title: title,
+                    streamUrl: streamUrl,
+                    mediaType: audioOnly ? 'audio' : 'video',
+                    fileExtension: audioOnly ? '.mp3' : '.mp4',
+                  );
+                }
+              }
+            } catch (_) {}
+            return null;
+          }),
+          'Cobalt Engine API ($cobaltHost)',
+        );
+      }
+    }
+
+    // Wait for the FIRST task that resolves a valid result, or fallback if all fail within max 10 seconds
+    try {
+      return await completer.future.timeout(const Duration(seconds: 10));
+    } catch (_) {
+      _logInstagramResolution('Parallel race timed out (10s); using generic fallback.');
+    }
+
     return GenericSocialMediaProvider().resolve(url, audioOnly: audioOnly);
   }
 
@@ -581,36 +736,74 @@ MediaSourceInfo? _parseInstagramPublicPage(
 ) {
   if (html == null || html.isEmpty) return null;
 
-  final streamPatterns = [
-  // Instagram video URL
-  RegExp(r'"video_url"\s*:\s*"([^"]+)"'),
-
-  // Facebook-style fields sometimes exposed by Instagram
-  RegExp(r'"playable_url_quality_hd"\s*:\s*"([^"]+)"'),
-  RegExp(r'"playable_url"\s*:\s*"([^"]+)"'),
-
-  // Generic video CDN URL — ONLY accept URLs containing .mp4
-  RegExp(
-    r'"(?:src|url)"\s*:\s*"(https?:[^"]*cdninstagram\.com[^"]*\.mp4[^"]*)"',
-  ),
-];
-
   String? streamUrl;
-  for (final pattern in streamPatterns) {
-    final candidate = pattern.firstMatch(html)?.group(1);
-    if (candidate == null) continue;
 
-    final cleaned = _cleanInstagramUrl(candidate);
-    final uri = Uri.tryParse(cleaned);
+  // 1. Structural JSON decoding from <script> tags
+  try {
+    final document = html_parser.parse(html);
+    final scripts = document.querySelectorAll('script');
+    for (final script in scripts) {
+      final text = script.text.trim();
+      if (text.contains('video_url') || text.contains('video_versions')) {
+        final jsonMatch = RegExp(r'(\{.*"video_url".*\})').firstMatch(text) ??
+            RegExp(r'(\{.*"video_versions".*\})').firstMatch(text);
+        if (jsonMatch != null && jsonMatch.group(1) != null) {
+          try {
+            final Map<String, dynamic> parsed = jsonDecode(jsonMatch.group(1)!);
+            final candidate = parsed['video_url']?.toString() ??
+                (parsed['video_versions'] is List && (parsed['video_versions'] as List).isNotEmpty
+                    ? (parsed['video_versions'] as List).first['url']?.toString()
+                    : null);
+            if (candidate != null && candidate.isNotEmpty) {
+              final cleaned = _cleanInstagramUrl(candidate);
+              if (cleaned.contains('.mp4')) {
+                streamUrl = cleaned;
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+    }
+  } catch (_) {}
 
-if (uri != null &&
-    uri.scheme == 'https' &&
-    uri.host.contains('cdninstagram.com') &&
-    uri.path.toLowerCase().contains('.mp4')) {
-  streamUrl = cleaned;
-  break;
-}
+  // 2. Fallback to Regex patterns
+  if (streamUrl == null) {
+    final streamPatterns = [
+      // Instagram video URL
+      RegExp(r'"video_url"\s*:\s*"([^"]+)"'),
+
+      // Instagram GraphQL video_versions array
+      RegExp(r'"video_versions"\s*:\s*\[\s*\{\s*"[^"]*"\s*:\s*"[^"]*"\s*,\s*"url"\s*:\s*"([^"]+)"'),
+      RegExp(r'"video_resources"\s*:\s*\[\s*\{\s*"src"\s*:\s*"([^"]+)"'),
+
+      // Facebook-style fields sometimes exposed by Instagram
+      RegExp(r'"playable_url_quality_hd"\s*:\s*"([^"]+)"'),
+      RegExp(r'"playable_url"\s*:\s*"([^"]+)"'),
+
+      // Generic video CDN URL — ONLY accept URLs containing .mp4
+      RegExp(
+        r'"(?:src|url)"\s*:\s*"(https?:[^"]*cdninstagram\.com[^"]*\.mp4[^"]*)"',
+      ),
+    ];
+
+    for (final pattern in streamPatterns) {
+      final candidate = pattern.firstMatch(html)?.group(1);
+      if (candidate == null) continue;
+
+      final cleaned = _cleanInstagramUrl(candidate);
+      final uri = Uri.tryParse(cleaned);
+
+      if (uri != null &&
+          uri.scheme == 'https' &&
+          uri.host.contains('cdninstagram.com') &&
+          uri.path.toLowerCase().contains('.mp4')) {
+        streamUrl = cleaned;
+        break;
+      }
+    }
   }
+
   if (streamUrl == null) return null;
 
   final document = html_parser.parse(html);
@@ -1078,6 +1271,248 @@ class FacebookSourceProvider implements MediaSourceProvider {
         .replaceAll(r'\u0025', '%');
   }
 
+
+/// Provider for Twitter / X posts and videos using multi-strategy resolution (vxtwitter API, fxtwitter API, Cobalt Engine API, TwitSave API, OpenGraph Proxy Mirrors)
+class TwitterSourceProvider implements MediaSourceProvider {
+  @override
+  bool canHandle(Uri url) {
+    final host = url.host.toLowerCase();
+    return host.contains('twitter.com') ||
+        host.contains('x.com') ||
+        host.contains('t.co') ||
+        host.contains('vxtwitter.com') ||
+        host.contains('fxtwitter.com') ||
+        host.contains('fixupx.com');
+  }
+
+  @override
+  Future<MediaSourceInfo> resolve(Uri url, {bool audioOnly = false}) async {
+    final dio = Dio(BaseOptions(
+      connectTimeout: const Duration(seconds: 8),
+      receiveTimeout: const Duration(seconds: 8),
+      followRedirects: true,
+      validateStatus: (status) => status != null && status < 500,
+    ));
+
+    final originalUrl = url.toString();
+    var cleanUrl = originalUrl;
+    if (cleanUrl.contains('t.co/')) {
+      try {
+        final res = await dio.head<void>(cleanUrl);
+        if (res.realUri.toString().isNotEmpty) {
+          cleanUrl = res.realUri.toString();
+        }
+      } catch (_) {}
+    }
+
+    final statusMatch = RegExp(r'/status/(\d+)').firstMatch(cleanUrl);
+    final statusId = statusMatch?.group(1);
+
+    // Strategy 1: vxtwitter API (api.vxtwitter.com)
+    if (statusId != null) {
+      try {
+        final vxUrl = 'https://api.vxtwitter.com/Twitter/status/$statusId';
+        final response = await dio.get<Map<String, dynamic>>(
+          vxUrl,
+          options: Options(headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          }),
+        );
+
+        if (response.statusCode == 200 && response.data != null) {
+          final data = response.data!;
+          final mediaList = data['media_extended'] as List?;
+          if (mediaList != null && mediaList.isNotEmpty) {
+            for (final item in mediaList) {
+              if (item is Map) {
+                final type = item['type']?.toString();
+                final streamUrl = item['url']?.toString();
+                if ((type == 'video' || type == 'gif') && streamUrl != null && streamUrl.isNotEmpty) {
+                  final text = data['text']?.toString() ?? 'Twitter Video';
+                  var title = text.split('\n').first;
+                  title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
+                  if (title.isEmpty) title = 'twitter_${DateTime.now().millisecondsSinceEpoch}';
+
+                  final thumbnail = data['user_screen_name'] != null ? item['thumbnail_url']?.toString() : null;
+
+                  return MediaSourceInfo(
+                    title: title,
+                    streamUrl: streamUrl,
+                    mediaType: audioOnly ? 'audio' : 'video',
+                    fileExtension: audioOnly ? '.mp3' : '.mp4',
+                    thumbnailUrl: thumbnail,
+                  );
+                }
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Strategy 2: fxtwitter API (api.fxtwitter.com)
+    if (statusId != null) {
+      try {
+        final fxUrl = 'https://api.fxtwitter.com/status/$statusId';
+        final response = await dio.get<Map<String, dynamic>>(
+          fxUrl,
+          options: Options(headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          }),
+        );
+
+        if (response.statusCode == 200 && response.data != null) {
+          final tweet = response.data!['tweet'] as Map?;
+          if (tweet != null) {
+            final media = tweet['media'] as Map?;
+            final videos = media?['videos'] as List?;
+            if (videos != null && videos.isNotEmpty) {
+              final firstVideo = videos.first as Map;
+              final variants = firstVideo['variants'] as List?;
+              String? bestUrl;
+              int maxBitrate = -1;
+
+              if (variants != null) {
+                for (final v in variants) {
+                  if (v is Map) {
+                    final vUrl = v['url']?.toString();
+                    final bitrate = (v['bitrate'] as num?)?.toInt() ?? 0;
+                    if (vUrl != null && vUrl.isNotEmpty && bitrate >= maxBitrate) {
+                      maxBitrate = bitrate;
+                      bestUrl = vUrl;
+                    }
+                  }
+                }
+              }
+
+              bestUrl ??= firstVideo['url']?.toString();
+
+              if (bestUrl != null && bestUrl.isNotEmpty) {
+                final text = tweet['text']?.toString() ?? 'Twitter Video';
+                var title = text.split('\n').first;
+                title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
+                if (title.isEmpty) title = 'twitter_${DateTime.now().millisecondsSinceEpoch}';
+
+                return MediaSourceInfo(
+                  title: title,
+                  streamUrl: bestUrl,
+                  mediaType: audioOnly ? 'audio' : 'video',
+                  fileExtension: audioOnly ? '.mp3' : '.mp4',
+                  thumbnailUrl: firstVideo['thumbnail_url']?.toString(),
+                );
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Strategy 3: Cobalt Engine API
+    try {
+      final cobaltResponse = await dio.post<Map<String, dynamic>>(
+        'https://api.cobalt.tools/api/json',
+        data: {
+          'url': cleanUrl,
+          'videoQuality': 'max',
+        },
+        options: Options(headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        }),
+      );
+      if (cobaltResponse.statusCode == 200 && cobaltResponse.data != null) {
+        final data = cobaltResponse.data!;
+        final streamUrl = data['url']?.toString();
+        if (streamUrl != null && streamUrl.isNotEmpty) {
+          final title = data['filename']?.toString() ?? 'Twitter Video';
+          return MediaSourceInfo(
+            title: title,
+            streamUrl: streamUrl,
+            mediaType: audioOnly ? 'audio' : 'video',
+            fileExtension: audioOnly ? '.mp3' : '.mp4',
+          );
+        }
+      }
+    } catch (_) {}
+
+    // Strategy 4: TwitSave HTML Scraper
+    try {
+      final twitSaveUrl = 'https://twitsave.com/info?url=${Uri.encodeComponent(cleanUrl)}';
+      final response = await dio.get<String>(
+        twitSaveUrl,
+        options: Options(headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        }),
+      );
+      if (response.statusCode == 200 && response.data != null) {
+        final html = response.data!;
+        final doc = html_parser.parse(html);
+        final downloadBtn = doc.querySelector('a[href*="twitsave.com/download"]') ??
+            doc.querySelector('a[href*="video.twimg.com"]') ??
+            doc.querySelector('a.origin-button');
+
+        final streamUrl = downloadBtn?.attributes['href'];
+        if (streamUrl != null && streamUrl.isNotEmpty) {
+          final titleElem = doc.querySelector('p.text-gray-800') ?? doc.querySelector('title');
+          var title = titleElem?.text ?? 'Twitter Video';
+          title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
+          if (title.isEmpty) title = 'twitter_${DateTime.now().millisecondsSinceEpoch}';
+
+          return MediaSourceInfo(
+            title: title,
+            streamUrl: streamUrl,
+            mediaType: audioOnly ? 'audio' : 'video',
+            fileExtension: audioOnly ? '.mp3' : '.mp4',
+          );
+        }
+      }
+    } catch (_) {}
+
+    // Strategy 5: OpenGraph Proxy Scraper (vxtwitter / fxtwitter / fixupx with Discordbot UA)
+    final proxyHosts = ['vxtwitter.com', 'fxtwitter.com', 'fixupx.com'];
+    for (final proxyHost in proxyHosts) {
+      try {
+        var proxyUrl = cleanUrl;
+        if (proxyUrl.contains('twitter.com')) {
+          proxyUrl = proxyUrl.replaceAll('twitter.com', proxyHost);
+        } else if (proxyUrl.contains('x.com')) {
+          proxyUrl = proxyUrl.replaceAll('x.com', proxyHost);
+        }
+
+        final response = await dio.get<String>(
+          proxyUrl,
+          options: Options(headers: {
+            'User-Agent': 'Discordbot/2.0',
+          }),
+        );
+        if (response.statusCode == 200 && response.data != null) {
+          final doc = html_parser.parse(response.data!);
+          final videoMeta = doc.querySelector('meta[property="og:video"]') ??
+              doc.querySelector('meta[property="og:video:secure_url"]') ??
+              doc.querySelector('meta[property="og:video:url"]') ??
+              doc.querySelector('meta[name="twitter:player:stream"]');
+          if (videoMeta?.attributes['content'] != null && videoMeta!.attributes['content']!.isNotEmpty) {
+            final streamUrl = videoMeta.attributes['content']!;
+            final titleMeta = doc.querySelector('meta[property="og:title"]') ?? doc.querySelector('meta[name="twitter:title"]');
+            var title = titleMeta?.attributes['content'] ?? 'Twitter Video';
+            title = title.replaceAll(RegExp(r'[^\w\s\-]'), ' ').trim();
+            if (title.isEmpty) title = 'twitter_${DateTime.now().millisecondsSinceEpoch}';
+
+            return MediaSourceInfo(
+              title: title,
+              streamUrl: streamUrl,
+              mediaType: audioOnly ? 'audio' : 'video',
+              fileExtension: audioOnly ? '.mp3' : '.mp4',
+            );
+          }
+        }
+      } catch (_) {}
+    }
+
+    return GenericSocialMediaProvider().resolve(url, audioOnly: audioOnly);
+  }
+}
 
 /// Generic OpenGraph / Meta Tag provider for public web and social media links (Instagram, X, TikTok, Facebook, etc.)
 class GenericSocialMediaProvider implements MediaSourceProvider {

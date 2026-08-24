@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../domain/entities/media_item_entity.dart';
+import '../../../../shared/media_item_details_modal.dart';
 import '../../../../shared/media_thumbnail.dart';
 import '../../../favorites/presentation/controllers/favorites_controller.dart';
 
@@ -9,6 +10,7 @@ class MediaItemTile extends ConsumerWidget {
   final MediaItemEntity item;
   final String? customSubtitle;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
   final VoidCallback? onMoreTap;
 
   const MediaItemTile({
@@ -16,6 +18,7 @@ class MediaItemTile extends ConsumerWidget {
     required this.item,
     this.customSubtitle,
     this.onTap,
+    this.onLongPress,
     this.onMoreTap,
   });
 
@@ -55,6 +58,7 @@ class MediaItemTile extends ConsumerWidget {
 
     return ListTile(
       onTap: onTap,
+      onLongPress: onLongPress ?? () => MediaItemDetailsModal.show(context, item),
       contentPadding: const EdgeInsets.symmetric(
         horizontal: 16.0,
         vertical: 4.0,

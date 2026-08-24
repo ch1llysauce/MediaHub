@@ -8,7 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:floating/floating.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:video_thumbnail/video_thumbnail.dart' as vt;
 
 import '../../../../core/providers/providers.dart';
@@ -73,6 +73,8 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
   bool _wasControlsVisibleOnPointerDown = true;
   bool _showRewindOverlay = false;
   bool _showForwardOverlay = false;
+  double _rewindOverlayOpacity = 0.0;
+  double _forwardOverlayOpacity = 0.0;
   bool _isSeekingToHistory = false;
   bool _isCompleted = false;
   int _lastKnownValidPosition = 0;
@@ -80,7 +82,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
   int _seekAccumulatedSeconds = 0;
   Timer? _controlsTimer;
   Timer? _seekOverlayTimer;
-  bool _hasResetforPrevious = false;
+  Timer? _seekOverlayFadeTimer;
 
   PiPStatus _pipStatus = PiPStatus.disabled;
   StreamSubscription<PiPStatus>? _pipStatusSub;
@@ -126,11 +128,18 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
     });
 
     _currentItem = widget.item;
-    _playlist = widget.playlist ?? [_currentItem];
+    final controllerQueue = ref.read(musicPlayerControllerProvider).queue;
+    final candidatePlaylist =
+        widget.playlist ??
+        (controllerQueue.isNotEmpty ? controllerQueue : null);
+    _playlist = candidatePlaylist ?? [_currentItem];
     _currentIndex = _playlist.indexWhere((e) => e.id == _currentItem.id);
     if (_currentIndex < 0) _currentIndex = 0;
 
-    ref.read(musicPlayerControllerProvider.notifier).pauseAudio();
+    ref.read(musicPlayerControllerProvider.notifier).playItem(
+          _currentItem,
+          queue: _playlist,
+        );
 
     _player = Player(
       configuration: const PlayerConfiguration(logLevel: MPVLogLevel.debug),
@@ -155,6 +164,8 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
         setState(() => _isPlaying = playing);
         if (playing) {
           _armPipOnLeave();
+        } else {
+          _disarmPipOnLeave();
         }
         _updatePipActions(playing);
       }
@@ -208,6 +219,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
 
     _player.stream.completed.listen((completed) {
       if (completed) {
+        _disarmPipOnLeave();
         if (_playbackMode == VideoPlaybackMode.repeatOne) {
           // I-restart lang ang parehong video, wag munang i-mark as completed
           _isCompleted = false;
@@ -226,6 +238,11 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
             .updatePosition(Duration.zero);
         if (_playbackMode == VideoPlaybackMode.autoNext) {
           _skipToNext();
+        } else if (mounted) {
+          setState(() {
+            _isPlaying = false;
+            _showControls = true;
+          });
         }
       }
     });
@@ -262,11 +279,25 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
   }
 
   Future<void> _armPipOnLeave() async {
+    if (!mounted || !_isPlaying || _isCompleted) return;
     final canEnter = await _floating.isPipAvailable;
     if (!canEnter) return;
 
     final status = await _floating.enable(OnLeavePiP());
+    try {
+      await _pipControlsChannel.invokeMethod('setPipAutoEnter', {'enabled': true});
+    } catch (_) {}
     debugPrint('[PiP] Armed OnLeavePiP, status: $status');
+  }
+
+  Future<void> _disarmPipOnLeave() async {
+    try {
+      await _floating.cancelOnLeavePiP();
+    } catch (_) {}
+    try {
+      await _pipControlsChannel.invokeMethod('setPipAutoEnter', {'enabled': false});
+    } catch (_) {}
+    debugPrint('[PiP] Disarmed OnLeavePiP');
   }
 
   Future<void> _updatePipActions(bool isPlaying) async {
@@ -402,40 +433,96 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
   }
 
   MediaItemEntity? _peekNextItem() {
+    if (_currentIndex >= 0 && _currentIndex < _playlist.length - 1) {
+      return _playlist[_currentIndex + 1];
+    }
     return ref.read(musicPlayerControllerProvider.notifier).peekNextItem();
   }
 
   Future<void> _skipToNext() async {
     _resetControlsTimer();
+    _isCompleted = false;
 
-    try {
-      await _player.pause();
-      await _player.stop();
-    } catch (_) {}
+    final controller = ref.read(musicPlayerControllerProvider.notifier);
+    final hasNextLocal = _currentIndex < _playlist.length - 1;
+    final nextControllerItem = controller.peekNextItem();
 
-    if (!mounted) return;
-
-    ref.read(musicPlayerControllerProvider.notifier).skipToNext();
+    if (hasNextLocal || nextControllerItem != null) {
+      if (hasNextLocal) {
+        _currentIndex++;
+        _currentItem = _playlist[_currentIndex];
+        controller.playItem(_currentItem, queue: _playlist);
+        await _playCurrentMedia();
+      } else {
+        await controller.skipToNext();
+      }
+    } else {
+      // Last video in queue! Do NOT call _player.stop() to avoid killing player controls.
+      try {
+        await _player.pause();
+      } catch (_) {}
+      if (mounted) {
+        setState(() {
+          _isPlaying = false;
+          _isCompleted = true;
+          _showControls = true;
+        });
+      }
+    }
   }
 
   Future<void> _skipToPrevious() async {
     _resetControlsTimer();
     _isCompleted = false;
-    if (!_hasResetforPrevious && _position.inSeconds > 3) {
+
+    final controller = ref.read(musicPlayerControllerProvider.notifier);
+    final hasPreviousLocal = _currentIndex > 0;
+
+    if (hasPreviousLocal && _position.inSeconds <= 3) {
+      _currentIndex--;
+      _currentItem = _playlist[_currentIndex];
+      controller.playItem(_currentItem, queue: _playlist);
+      await _playCurrentMedia();
+    } else {
+      // Restart current video from beginning
       await _player.seek(Duration.zero);
+      await _player.play();
       if (mounted) {
         setState(() {
-          _hasResetforPrevious = true;
+          _position = Duration.zero;
+          _isPlaying = true;
         });
       }
-      return;
     }
-    try {
-      await _player.stop();
-    } catch (_) {}
+  }
 
-    if (!mounted) return;
-    ref.read(musicPlayerControllerProvider.notifier).skipToPrevious();
+  Future<void> _shareCurrentMedia() async {
+    _resetControlsTimer();
+    try {
+      final file = File(_currentItem.path);
+      if (await file.exists()) {
+        await Share.shareXFiles(
+          [XFile(_currentItem.path)],
+          text: 'Sharing "${_currentItem.title}" from MediaHub',
+        );
+      } else {
+        await Share.share('Check out "${_currentItem.title}" on MediaHub');
+      }
+    } catch (e) {
+      if (mounted) {
+        final isMissingPlugin = e.toString().contains('MissingPluginException');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isMissingPlugin
+                  ? 'Please stop and restart the app completely (full rebuild) to enable native file sharing.'
+                  : 'Unable to share video: $e',
+            ),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
   }
 
   void _toggleMute() {
@@ -490,7 +577,8 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
   }
 
   void _onSliderDragStart(double value) {
-    _controlsTimer?.cancel(); 
+    _controlsTimer?.cancel();
+    _isCompleted = false;
     setState(() {
       _isDraggingSlider = true;
       _previewPosition = Duration(milliseconds: value.toInt());
@@ -511,15 +599,17 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
   void _onSliderDragEnd(double value) {
     _previewDebounceTimer?.cancel();
     _isCompleted = false;
-    _player.seek(Duration(milliseconds: value.toInt()));
+    final seekPos = Duration(milliseconds: value.toInt());
+    _player.seek(seekPos);
     setState(() {
       _isDraggingSlider = false;
+      _position = seekPos;
     });
-     WidgetsBinding.instance.addPostFrameCallback((_) {
-    if (mounted) {
-      _resetControlsTimer();
-    }
-  });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _resetControlsTimer();
+      }
+    });
   }
 
   Future<void> _requestPreviewFrame(Duration position) async {
@@ -546,13 +636,19 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
     _player.seek(Duration(seconds: newSeconds));
 
     _seekOverlayTimer?.cancel();
+    _seekOverlayFadeTimer?.cancel();
+
     setState(() {
       if (seconds < 0) {
         _showRewindOverlay = true;
         _showForwardOverlay = false;
+        _forwardOverlayOpacity = 0.0;
+        _rewindOverlayOpacity = 0.0;
       } else {
         _showForwardOverlay = true;
         _showRewindOverlay = false;
+        _rewindOverlayOpacity = 0.0;
+        _forwardOverlayOpacity = 0.0;
       }
       if ((_seekAccumulatedSeconds < 0 && seconds < 0) ||
           (_seekAccumulatedSeconds > 0 && seconds > 0)) {
@@ -562,12 +658,32 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
       }
     });
 
-    _seekOverlayTimer = Timer(const Duration(milliseconds: 800), () {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         setState(() {
-          _showRewindOverlay = false;
-          _showForwardOverlay = false;
-          _seekAccumulatedSeconds = 0;
+          if (seconds < 0) {
+            _rewindOverlayOpacity = 1.0;
+          } else {
+            _forwardOverlayOpacity = 1.0;
+          }
+        });
+      }
+    });
+
+    _seekOverlayTimer = Timer(const Duration(milliseconds: 550), () {
+      if (mounted) {
+        setState(() {
+          _rewindOverlayOpacity = 0.0;
+          _forwardOverlayOpacity = 0.0;
+        });
+        _seekOverlayFadeTimer = Timer(const Duration(milliseconds: 250), () {
+          if (mounted) {
+            setState(() {
+              _showRewindOverlay = false;
+              _showForwardOverlay = false;
+              _seekAccumulatedSeconds = 0;
+            });
+          }
         });
       }
     });
@@ -576,7 +692,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
   Future<void> _onBackPressed() async {
     // If the video completed naturally, save position 0 so it restarts
     // next time instead of getting stuck at the last second.
-    await _floating.cancelOnLeavePiP();
+    await _disarmPipOnLeave();
     if (_isCompleted) {
       await ref
           .read(historyControllerProvider)
@@ -615,11 +731,12 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
   @override
   void dispose() {
     _previewDebounceTimer?.cancel();
-    _floating.cancelOnLeavePiP();
+    _disarmPipOnLeave();
     VideoPlayerPage.isActive = false;
     WidgetsBinding.instance.removeObserver(this);
     _controlsTimer?.cancel();
     _seekOverlayTimer?.cancel();
+    _seekOverlayFadeTimer?.cancel();
     _pipStatusSub?.cancel();
 
     // If the video completed naturally, ensure position stays at 0
@@ -672,8 +789,13 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
 
   void _togglePlayPause() {
     _resetControlsTimer();
-    if (_isCompleted) {
+    if (_isCompleted ||
+        (_duration.inSeconds > 0 &&
+            _position.inSeconds >= _duration.inSeconds - 1)) {
       _isCompleted = false;
+      _player.seek(Duration.zero);
+      _player.play();
+      return;
     }
     _player.playOrPause();
   }
@@ -715,6 +837,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
       0.0,
       durationMs > 0 ? durationMs : 1.0,
     );
+    final primaryColor = Theme.of(context).colorScheme.primary;
 
     return PopScope(
       canPop: false,
@@ -809,8 +932,9 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                   Positioned(
                     left: MediaQuery.of(context).size.width * 0.12,
                     child: AnimatedOpacity(
-                      opacity: _showRewindOverlay ? 1.0 : 0.0,
+                      opacity: _rewindOverlayOpacity,
                       duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 24,
@@ -848,8 +972,9 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                   Positioned(
                     right: MediaQuery.of(context).size.width * 0.12,
                     child: AnimatedOpacity(
-                      opacity: _showForwardOverlay ? 1.0 : 0.0,
+                      opacity: _forwardOverlayOpacity,
                       duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeInOut,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 24,
@@ -968,6 +1093,14 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                                               : 'Add to Favorites',
                                         );
                                       },
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.share_rounded,
+                                        color: Colors.white,
+                                      ),
+                                      onPressed: _shareCurrentMedia,
+                                      tooltip: 'Share Video',
                                     ),
                                   ],
                                 ),
@@ -1186,10 +1319,10 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                                           const RoundSliderOverlayShape(
                                             overlayRadius: 12.0,
                                           ),
-                                      activeTrackColor: Colors.blueAccent,
+                                      activeTrackColor: primaryColor,
                                       inactiveTrackColor: Colors.white24,
-                                      thumbColor: Colors.blueAccent,
-                                      overlayColor: Colors.blueAccent.withValues(
+                                      thumbColor: primaryColor,
+                                      overlayColor: primaryColor.withValues(
                                         alpha: 0.2,
                                       ),
                                     ),
@@ -1266,45 +1399,168 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
 
                                         const Spacer(),
 
-                                        // Autoplay Toggle Switch Button
-                                        // Playback Mode Toggle: Off → Autoplay Next → Repeat One
-                                        IconButton(
-                                          icon: Icon(
-                                            switch (_playbackMode) {
-                                              VideoPlaybackMode.off =>
-                                                Icons.cancel_outlined,
-                                              VideoPlaybackMode.autoNext =>
-                                                Icons.autorenew_rounded,
-                                              VideoPlaybackMode.repeatOne =>
-                                                Icons.repeat_one_rounded,
-                                            },
-                                            color:
-                                                _playbackMode ==
-                                                    VideoPlaybackMode.off
-                                                ? Colors.white54
-                                                : Colors.redAccent,
-                                            size: 20,
+                                        // Autoplay & Repeat Mode Button with Label
+                                        InkWell(
+                                          onTap: _cyclePlaybackMode,
+                                          borderRadius: BorderRadius.circular(16),
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 6,
+                                              vertical: 4,
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  switch (_playbackMode) {
+                                                    VideoPlaybackMode.off =>
+                                                      Icons.cancel_outlined,
+                                                    VideoPlaybackMode.autoNext =>
+                                                      Icons.autorenew_rounded,
+                                                    VideoPlaybackMode.repeatOne =>
+                                                      Icons.repeat_one_rounded,
+                                                  },
+                                                  color:
+                                                      _playbackMode ==
+                                                          VideoPlaybackMode.off
+                                                      ? Colors.white54
+                                                      : primaryColor,
+                                                  size: 18,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  switch (_playbackMode) {
+                                                    VideoPlaybackMode.off =>
+                                                      'Off',
+                                                    VideoPlaybackMode.autoNext =>
+                                                      'Auto Next',
+                                                    VideoPlaybackMode.repeatOne =>
+                                                      'Repeat 1',
+                                                  },
+                                                  style: TextStyle(
+                                                    color:
+                                                        _playbackMode ==
+                                                            VideoPlaybackMode.off
+                                                        ? Colors.white54
+                                                        : primaryColor,
+                                                    fontSize: 11.5,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
                                           ),
-                                          tooltip: switch (_playbackMode) {
-                                            VideoPlaybackMode.off =>
-                                              'Playback: Off',
-                                            VideoPlaybackMode.autoNext =>
-                                              'Playback: Autoplay Next',
-                                            VideoPlaybackMode.repeatOne =>
-                                              'Playback: Repeat',
-                                          },
-                                          onPressed: _cyclePlaybackMode,
                                         ),
-                                        // Settings / Speed Popup Menu
-                                        PopupMenuButton<double>(
+
+                                        const SizedBox(width: 4),
+
+                                        // Settings / Speed & Playback Mode Popup Menu
+                                        PopupMenuButton<Object>(
                                           icon: const Icon(
                                             Icons.settings_rounded,
                                             color: Colors.white,
                                             size: 20,
                                           ),
-                                          tooltip: 'Playback Speed',
-                                          onSelected: _setSpeed,
+                                          tooltip: 'Video Settings',
+                                          onSelected: (value) {
+                                            if (value is VideoPlaybackMode) {
+                                              setState(
+                                                () => _playbackMode = value,
+                                              );
+                                            } else if (value is double) {
+                                              _setSpeed(value);
+                                            }
+                                          },
                                           itemBuilder: (context) => [
+                                            // Playback Mode Section Header
+                                            const PopupMenuItem<Object>(
+                                              enabled: false,
+                                              height: 32,
+                                              child: Text(
+                                                'PLAYBACK MODE',
+                                                style: TextStyle(
+                                                  fontSize: 10.5,
+                                                  fontWeight: FontWeight.w800,
+                                                  color: Colors.grey,
+                                                  letterSpacing: 0.8,
+                                                ),
+                                              ),
+                                            ),
+                                            for (final mode
+                                                in VideoPlaybackMode.values)
+                                              PopupMenuItem<Object>(
+                                                value: mode,
+                                                height: 38,
+                                                child: Row(
+                                                  children: [
+                                                    Icon(
+                                                      switch (mode) {
+                                                        VideoPlaybackMode.off =>
+                                                          Icons.cancel_outlined,
+                                                        VideoPlaybackMode.autoNext =>
+                                                          Icons.autorenew_rounded,
+                                                        VideoPlaybackMode.repeatOne =>
+                                                          Icons.repeat_one_rounded,
+                                                      },
+                                                      size: 18,
+                                                      color:
+                                                          _playbackMode == mode
+                                                              ? primaryColor
+                                                              : Colors.white70,
+                                                    ),
+                                                    const SizedBox(width: 10),
+                                                    Text(
+                                                      switch (mode) {
+                                                        VideoPlaybackMode.off =>
+                                                          'Off',
+                                                        VideoPlaybackMode.autoNext =>
+                                                          'Auto Next',
+                                                        VideoPlaybackMode.repeatOne =>
+                                                          'Repeat One',
+                                                      },
+                                                      style: TextStyle(
+                                                        fontSize: 13,
+                                                        color:
+                                                            _playbackMode ==
+                                                                    mode
+                                                                ? primaryColor
+                                                                : Colors.white,
+                                                        fontWeight:
+                                                            _playbackMode ==
+                                                                    mode
+                                                                ? FontWeight
+                                                                    .bold
+                                                                : FontWeight
+                                                                    .normal,
+                                                      ),
+                                                    ),
+                                                    if (_playbackMode ==
+                                                        mode) ...[
+                                                      const Spacer(),
+                                                      Icon(
+                                                        Icons.check_rounded,
+                                                        size: 16,
+                                                        color: primaryColor,
+                                                      ),
+                                                    ],
+                                                  ],
+                                                ),
+                                              ),
+                                            const PopupMenuDivider(),
+                                            // Playback Speed Section Header
+                                            const PopupMenuItem<Object>(
+                                              enabled: false,
+                                              height: 32,
+                                              child: Text(
+                                                'PLAYBACK SPEED',
+                                                style: TextStyle(
+                                                  fontSize: 10.5,
+                                                  fontWeight: FontWeight.w800,
+                                                  color: Colors.grey,
+                                                  letterSpacing: 0.8,
+                                                ),
+                                              ),
+                                            ),
                                             for (final speed in [
                                               0.5,
                                               0.75,
@@ -1313,16 +1569,41 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                                               1.5,
                                               2.0,
                                             ])
-                                              PopupMenuItem(
+                                              PopupMenuItem<Object>(
                                                 value: speed,
-                                                child: Text(
-                                                  '${speed}x Speed',
-                                                  style: TextStyle(
-                                                    fontWeight:
-                                                        _playbackSpeed == speed
-                                                        ? FontWeight.bold
-                                                        : FontWeight.normal,
-                                                  ),
+                                                height: 38,
+                                                child: Row(
+                                                  children: [
+                                                    Text(
+                                                      speed == 1.0
+                                                          ? '1.0x (Normal)'
+                                                          : '${speed}x Speed',
+                                                      style: TextStyle(
+                                                        fontSize: 13,
+                                                        color:
+                                                            _playbackSpeed ==
+                                                                    speed
+                                                                ? primaryColor
+                                                                : Colors.white,
+                                                        fontWeight:
+                                                            _playbackSpeed ==
+                                                                    speed
+                                                                ? FontWeight
+                                                                    .bold
+                                                                : FontWeight
+                                                                    .normal,
+                                                      ),
+                                                    ),
+                                                    if (_playbackSpeed ==
+                                                        speed) ...[
+                                                      const Spacer(),
+                                                      Icon(
+                                                        Icons.check_rounded,
+                                                        size: 16,
+                                                        color: primaryColor,
+                                                      ),
+                                                    ],
+                                                  ],
                                                 ),
                                               ),
                                           ],
@@ -1353,30 +1634,69 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                 ),
 
                 // Up Next 10-Second Preview Overlay Banner
-                if (!_isUpNextDismissed &&
-                    _pipStatus != PiPStatus.enabled &&
-                    _duration.inSeconds > 2 &&
-                    (_duration.inSeconds - _position.inSeconds) <= 10 &&
-                    (_duration.inSeconds - _position.inSeconds) > 0 &&
-                    _peekNextItem() != null)
-                  Positioned(
-                    bottom:
-                        (_showControls ? 110 : 80) +
-                        MediaQuery.of(context).padding.bottom,
-                    left: 16,
-                    right: 16,
-                    child: UpNextBannerWidget(
-                      item: _peekNextItem()!,
-                      remainingSeconds:
-                          (_duration.inSeconds - _position.inSeconds).clamp(
-                            0,
-                            10,
+                Builder(
+                  builder: (context) {
+                    final isLandscape =
+                        MediaQuery.of(context).orientation ==
+                        Orientation.landscape;
+
+                    return Positioned(
+                      bottom:
+                          (isLandscape
+                              ? (_showControls ? 56 : 16)
+                              : (_showControls ? 110 : 80)) +
+                          MediaQuery.of(context).padding.bottom,
+                      left: isLandscape ? 24 : 16,
+                      right: isLandscape ? 24 : 16,
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: isLandscape ? 520 : double.infinity,
                           ),
-                      onPlayNow: _skipToNext,
-                      onDismiss: () =>
-                          setState(() => _isUpNextDismissed = true),
-                    ),
-                  ),
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 350),
+                            reverseDuration: const Duration(milliseconds: 300),
+                            switchInCurve: Curves.easeOut,
+                            switchOutCurve: Curves.easeIn,
+                            transitionBuilder: (child, animation) {
+                              return FadeTransition(
+                                opacity: animation,
+                                child: SlideTransition(
+                                  position: Tween<Offset>(
+                                    begin: const Offset(0, 0.25),
+                                    end: Offset.zero,
+                                  ).animate(animation),
+                                  child: child,
+                                ),
+                              );
+                            },
+                            child: (!_isUpNextDismissed &&
+                                    _pipStatus != PiPStatus.enabled &&
+                                    _duration.inSeconds > 2 &&
+                                    (_duration.inSeconds - _position.inSeconds) <=
+                                        10 &&
+                                    (_duration.inSeconds - _position.inSeconds) > 0 &&
+                                    _peekNextItem() != null)
+                                ? UpNextBannerWidget(
+                                    key: ValueKey(_peekNextItem()!.id),
+                                    item: _peekNextItem()!,
+                                    remainingSeconds:
+                                        (_duration.inSeconds - _position.inSeconds)
+                                            .clamp(0, 10),
+                                    onPlayNow: _skipToNext,
+                                    onDismiss: () =>
+                                        setState(() => _isUpNextDismissed = true),
+                                  )
+                                : const SizedBox.shrink(
+                                    key: ValueKey('empty_video_up_next'),
+                                  ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ],
             ),
           ),

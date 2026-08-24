@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -6,8 +8,44 @@ import '../controllers/music_player_controller.dart';
 import '../widgets/up_next_banner_widget.dart';
 import '../../../favorites/presentation/controllers/favorites_controller.dart';
 
+final artworkColorSchemeProvider =
+    FutureProvider.family<ColorScheme?, String?>((ref, artworkPath) async {
+  if (artworkPath == null || artworkPath.isEmpty) return null;
+  final file = File(artworkPath);
+  if (!await file.exists()) return null;
+  try {
+    return await ColorScheme.fromImageProvider(
+      provider: FileImage(file),
+      brightness: Brightness.dark,
+    );
+  } catch (_) {
+    return null;
+  }
+});
+
 class FullMusicPlayerPage extends ConsumerWidget {
   const FullMusicPlayerPage({super.key});
+
+  static Future<void> open(BuildContext context) {
+    return Navigator.of(context, rootNavigator: true).push(
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const FullMusicPlayerPage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 1),
+              end: Offset.zero,
+            ).animate(CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+            )),
+            child: child,
+          );
+        },
+      ),
+    );
+  }
 
   String _formatDuration(Duration duration) {
     final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -31,7 +69,20 @@ class FullMusicPlayerPage extends ConsumerWidget {
     }
 
     final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
+    final defaultColorScheme = theme.colorScheme;
+
+    final dynamicColorScheme =
+        ref.watch(artworkColorSchemeProvider(activeItem.artworkPath)).value ??
+            defaultColorScheme;
+
+    final primaryColor = dynamicColorScheme.primary;
+    final surfaceColor = defaultColorScheme.surface;
+
+    // Color-infused deep bottom tint so the entire background has dynamic color
+    final bottomColor = Color.alphaBlend(
+      primaryColor.withValues(alpha: 0.35),
+      surfaceColor,
+    );
 
     final durationSeconds = playerState.duration.inSeconds.toDouble();
     final positionSeconds = playerState.position.inSeconds.toDouble().clamp(
@@ -39,49 +90,65 @@ class FullMusicPlayerPage extends ConsumerWidget {
       durationSeconds > 0 ? durationSeconds : 1.0,
     );
 
-    return Scaffold(
-      backgroundColor: colorScheme.surface,
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 32),
-          onPressed: () => Navigator.of(context).pop(),
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 600),
+      curve: Curves.easeOut,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            primaryColor.withValues(alpha: 0.70),
+            primaryColor.withValues(alpha: 0.50),
+            bottomColor,
+          ],
+          stops: const [0.0, 0.50, 1.0],
         ),
-        title: const Text(
-          'Now Playing',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        centerTitle: true,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
       ),
-      body: SafeArea(
-        child: OrientationBuilder(
-          builder: (context, orientation) {
-            if (orientation == Orientation.landscape) {
-              return _buildLandscapeLayout(
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 32),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          title: const Text(
+            'Now Playing',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          centerTitle: true,
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+        ),
+        body: SafeArea(
+          child: OrientationBuilder(
+            builder: (context, orientation) {
+              if (orientation == Orientation.landscape) {
+                return _buildLandscapeLayout(
+                  context,
+                  ref,
+                  theme,
+                  dynamicColorScheme,
+                  activeItem,
+                  playerState,
+                  controller,
+                  positionSeconds,
+                  durationSeconds,
+                );
+              }
+              return _buildPortraitLayout(
                 context,
                 ref,
                 theme,
-                colorScheme,
+                dynamicColorScheme,
                 activeItem,
                 playerState,
                 controller,
                 positionSeconds,
                 durationSeconds,
               );
-            }
-            return _buildPortraitLayout(
-              context,
-              ref,
-              theme,
-              colorScheme,
-              activeItem,
-              playerState,
-              controller,
-              positionSeconds,
-              durationSeconds,
-            );
-          },
+            },
+          ),
         ),
       ),
     );
@@ -99,50 +166,74 @@ class FullMusicPlayerPage extends ConsumerWidget {
     double positionSeconds,
     double durationSeconds,
   ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-      child: Column(
-        children: [
-          const Spacer(),
-          Center(
-            child: Container(
-              width: MediaQuery.of(context).size.width * 0.75,
-              height: MediaQuery.of(context).size.width * 0.75,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(24.0),
-                boxShadow: [
-                  BoxShadow(
-                    color: colorScheme.primary.withValues(alpha: 0.25),
-                    blurRadius: 20,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: MediaThumbnail(
-                artworkPath: activeItem.artworkPath,
-                mediaType: activeItem.mediaType,
-                size: MediaQuery.of(context).size.width * 0.75,
-                borderRadius: 24,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableHeight = constraints.maxHeight;
+        final artworkSize = (availableHeight * 0.38).clamp(160.0, 320.0);
+
+        return SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: availableHeight),
+            child: IntrinsicHeight(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
+                child: Column(
+                  children: [
+                    const Spacer(),
+                    SizedBox(
+                      width: double.infinity,
+                      height: artworkSize,
+                      child: _ArtworkDoubleTapSeekArea(
+                        controller: controller,
+                        artworkSize: artworkSize,
+                        child: Center(
+                          child: Container(
+                            width: artworkSize,
+                            height: artworkSize,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(24.0),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: colorScheme.primary.withValues(alpha: 0.35),
+                                  blurRadius: 28,
+                                  spreadRadius: 2,
+                                  offset: const Offset(0, 10),
+                                ),
+                              ],
+                            ),
+                            child: MediaThumbnail(
+                              artworkPath: activeItem.artworkPath,
+                              mediaType: activeItem.mediaType,
+                              size: artworkSize,
+                              borderRadius: 24,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    _buildMetadataRow(context, ref, theme, colorScheme, activeItem),
+                    const SizedBox(height: 16),
+                    _buildSeekBar(
+                      context,
+                      theme,
+                      colorScheme,
+                      controller,
+                      playerState,
+                      positionSeconds,
+                      durationSeconds,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildControls(colorScheme, controller, playerState),
+                    const Spacer(),
+                    _buildUpNextBanner(controller, playerState),
+                  ],
+                ),
               ),
             ),
           ),
-          const Spacer(),
-          _buildMetadataRow(context, ref, theme, colorScheme, activeItem),
-          const SizedBox(height: 24),
-          _buildSeekBar(
-            theme,
-            colorScheme,
-            controller,
-            playerState,
-            positionSeconds,
-            durationSeconds,
-          ),
-          const SizedBox(height: 16),
-          _buildControls(colorScheme, controller, playerState),
-          const Spacer(),
-          _buildUpNextBanner(controller, playerState),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -158,36 +249,42 @@ class FullMusicPlayerPage extends ConsumerWidget {
     double positionSeconds,
     double durationSeconds,
   ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(
-            flex: 4,
-            child: Center(
-              child: Container(
-                width: MediaQuery.of(context).size.height * 0.55,
-                height: MediaQuery.of(context).size.height * 0.55,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20.0),
-                  boxShadow: [
-                    BoxShadow(
-                      color: colorScheme.primary.withValues(alpha: 0.25),
-                      blurRadius: 16,
-                      offset: const Offset(0, 6),
-                    ),
-                  ],
-                ),
-                child: MediaThumbnail(
-                  artworkPath: activeItem.artworkPath,
-                  mediaType: activeItem.mediaType,
-                  size: MediaQuery.of(context).size.height * 0.55,
-                  borderRadius: 20,
+    final artworkSize = MediaQuery.of(context).size.height * 0.55;
+
+    return _ArtworkDoubleTapSeekArea(
+      controller: controller,
+      artworkSize: artworkSize,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Expanded(
+              flex: 4,
+              child: Center(
+                child: Container(
+                  width: artworkSize,
+                  height: artworkSize,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20.0),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colorScheme.primary.withValues(alpha: 0.35),
+                        blurRadius: 24,
+                        spreadRadius: 2,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: MediaThumbnail(
+                    artworkPath: activeItem.artworkPath,
+                    mediaType: activeItem.mediaType,
+                    size: artworkSize,
+                    borderRadius: 20,
+                  ),
                 ),
               ),
             ),
-          ),
           const SizedBox(width: 24),
           // Kanan: Metadata, seekbar, controls
           Expanded(
@@ -205,6 +302,7 @@ class FullMusicPlayerPage extends ConsumerWidget {
                   ),
                   const SizedBox(height: 16),
                   _buildSeekBar(
+                    context,
                     theme,
                     colorScheme,
                     controller,
@@ -222,8 +320,9 @@ class FullMusicPlayerPage extends ConsumerWidget {
           ),
         ],
       ),
-    );
-  }
+    ),
+  );
+}
 
   // ==================== SHARED WIDGET BUILDERS ====================
   Widget _buildMetadataRow(
@@ -278,6 +377,7 @@ class FullMusicPlayerPage extends ConsumerWidget {
   }
 
   Widget _buildSeekBar(
+    BuildContext context,
     ThemeData theme,
     ColorScheme colorScheme,
     dynamic controller,
@@ -285,14 +385,31 @@ class FullMusicPlayerPage extends ConsumerWidget {
     double positionSeconds,
     double durationSeconds,
   ) {
+    final activeColor = colorScheme.primary;
+    final inactiveColor = colorScheme.onSurface.withValues(alpha: 0.25);
+
     return Column(
       children: [
-        Slider(
-          value: positionSeconds,
-          max: durationSeconds > 0 ? durationSeconds : 1.0,
-          onChanged: (value) {
-            controller.seek(Duration(seconds: value.toInt()));
-          },
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 6.0,
+            activeTrackColor: activeColor,
+            inactiveTrackColor: inactiveColor,
+            thumbColor: activeColor,
+            overlayColor: activeColor.withValues(alpha: 0.2),
+            thumbShape: const RoundSliderThumbShape(
+              enabledThumbRadius: 8.0,
+            ),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 18.0),
+            trackShape: const RoundedRectSliderTrackShape(),
+          ),
+          child: Slider(
+            value: positionSeconds,
+            max: durationSeconds > 0 ? durationSeconds : 1.0,
+            onChanged: (value) {
+              controller.seek(Duration(seconds: value.toInt()));
+            },
+          ),
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16.0),
@@ -303,12 +420,14 @@ class FullMusicPlayerPage extends ConsumerWidget {
                 _formatDuration(playerState.position),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               Text(
                 _formatDuration(playerState.duration),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ],
@@ -374,6 +493,7 @@ class FullMusicPlayerPage extends ConsumerWidget {
           onPressed: hasNext ? () => controller.skipToNext() : null,
         ),
         IconButton(
+          iconSize: 28,
           icon: Icon(
             playerState.repeatMode == PlayerRepeatMode.one
                 ? Icons.repeat_one_rounded
@@ -389,16 +509,267 @@ class FullMusicPlayerPage extends ConsumerWidget {
   }
 
   Widget _buildUpNextBanner(dynamic controller, dynamic playerState) {
-    if (!playerState.showUpNextPreview || playerState.nextUpItem == null) {
-      return const SizedBox.shrink();
-    }
-    return UpNextBannerWidget(
-      item: playerState.nextUpItem!,
-      remainingSeconds:
-          (playerState.duration.inSeconds - playerState.position.inSeconds)
-              .clamp(0, 10),
-      onPlayNow: () => controller.skipToNext(),
-      onDismiss: () => controller.dismissUpNextPreview(),
+    final showBanner =
+        playerState.showUpNextPreview && playerState.nextUpItem != null;
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 350),
+      reverseDuration: const Duration(milliseconds: 300),
+      switchInCurve: Curves.easeOut,
+      switchOutCurve: Curves.easeIn,
+      transitionBuilder: (child, animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.25),
+              end: Offset.zero,
+            ).animate(animation),
+            child: child,
+          ),
+        );
+      },
+      child: showBanner
+          ? UpNextBannerWidget(
+              key: ValueKey(playerState.nextUpItem!.id),
+              item: playerState.nextUpItem!,
+              remainingSeconds:
+                  (playerState.duration.inSeconds - playerState.position.inSeconds)
+                      .clamp(0, 10),
+              onPlayNow: () => controller.skipToNext(),
+              onDismiss: () => controller.dismissUpNextPreview(),
+            )
+          : const SizedBox.shrink(key: ValueKey('empty_music_up_next')),
+    );
+  }
+}
+
+class _ArtworkDoubleTapSeekArea extends StatefulWidget {
+  final Widget child;
+  final dynamic controller;
+  final double artworkSize;
+
+  const _ArtworkDoubleTapSeekArea({
+    required this.child,
+    required this.controller,
+    required this.artworkSize,
+  });
+
+  @override
+  State<_ArtworkDoubleTapSeekArea> createState() =>
+      _ArtworkDoubleTapSeekAreaState();
+}
+
+class _ArtworkDoubleTapSeekAreaState extends State<_ArtworkDoubleTapSeekArea> {
+  bool _showRewindOverlay = false;
+  bool _showForwardOverlay = false;
+  double _rewindOpacity = 0.0;
+  double _forwardOpacity = 0.0;
+  Timer? _hideTimer;
+  Timer? _fadeTimer;
+
+  void _triggerRewind() {
+    widget.controller.seekRelative(-10);
+    _hideTimer?.cancel();
+    _fadeTimer?.cancel();
+
+    setState(() {
+      _showRewindOverlay = true;
+      _showForwardOverlay = false;
+      _forwardOpacity = 0.0;
+      _rewindOpacity = 0.0;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _showRewindOverlay) {
+        setState(() {
+          _rewindOpacity = 1.0;
+        });
+      }
+    });
+
+    _hideTimer = Timer(const Duration(milliseconds: 550), () {
+      if (mounted) {
+        setState(() {
+          _rewindOpacity = 0.0;
+        });
+        _fadeTimer = Timer(const Duration(milliseconds: 250), () {
+          if (mounted) {
+            setState(() {
+              _showRewindOverlay = false;
+            });
+          }
+        });
+      }
+    });
+  }
+
+  void _triggerForward() {
+    widget.controller.seekRelative(10);
+    _hideTimer?.cancel();
+    _fadeTimer?.cancel();
+
+    setState(() {
+      _showForwardOverlay = true;
+      _showRewindOverlay = false;
+      _rewindOpacity = 0.0;
+      _forwardOpacity = 0.0;
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _showForwardOverlay) {
+        setState(() {
+          _forwardOpacity = 1.0;
+        });
+      }
+    });
+
+    _hideTimer = Timer(const Duration(milliseconds: 550), () {
+      if (mounted) {
+        setState(() {
+          _forwardOpacity = 0.0;
+        });
+        _fadeTimer = Timer(const Duration(milliseconds: 250), () {
+          if (mounted) {
+            setState(() {
+              _showForwardOverlay = false;
+            });
+          }
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    _fadeTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    final screenWidth = mediaQuery.size.width;
+    final isLandscape = mediaQuery.orientation == Orientation.landscape;
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        widget.child,
+
+        // Full-width gesture touch zones across the screen (X-axis)
+        Positioned.fill(
+          child: Row(
+            children: [
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onDoubleTap: _triggerRewind,
+                  child: const SizedBox.expand(),
+                ),
+              ),
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onDoubleTap: _triggerForward,
+                  child: const SizedBox.expand(),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Rewind Overlay Pill (-10s)
+        if (_showRewindOverlay)
+          Positioned(
+            left: isLandscape ? screenWidth * 0.12 : 36,
+            child: AnimatedOpacity(
+              opacity: _rewindOpacity,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeInOut,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 12.0),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(30.0),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      blurRadius: 16,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Icon(
+                      Icons.replay_10_rounded,
+                      color: Colors.white,
+                      size: 26,
+                    ),
+                    SizedBox(width: 6),
+                    Text(
+                      '-10s',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+        // Forward Overlay Pill (+10s)
+        if (_showForwardOverlay)
+          Positioned(
+            right: isLandscape ? screenWidth * 0.12 : 36,
+            child: AnimatedOpacity(
+              opacity: _forwardOpacity,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeInOut,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 12.0),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.75),
+                  borderRadius: BorderRadius.circular(30.0),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      blurRadius: 16,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Text(
+                      '+10s',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    SizedBox(width: 6),
+                    Icon(
+                      Icons.forward_10_rounded,
+                      color: Colors.white,
+                      size: 26,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

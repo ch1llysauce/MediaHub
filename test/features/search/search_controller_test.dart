@@ -1,11 +1,15 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mediahub/domain/entities/media_item_entity.dart';
 import 'package:mediahub/features/search/presentation/controllers/search_controller.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late List<MediaItemEntity> mockItems;
 
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
     mockItems = [
       MediaItemEntity(
         id: '1',

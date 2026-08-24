@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/providers/providers.dart';
 import '../../../../domain/entities/media_item_entity.dart';
 import '../../../player/presentation/controllers/music_player_controller.dart';
+import '../../../player/presentation/pages/full_music_player_page.dart';
 import '../controllers/playlist_detail_controller.dart';
 import '../controllers/playlists_controller.dart';
 
@@ -95,12 +96,20 @@ class PlaylistDetailPage extends ConsumerWidget {
     List<MediaItemEntity> items, {
     bool? isShuffle,
   }) {
-    ref.read(musicPlayerControllerProvider.notifier).playItem(
-          item,
-          queue: items,
-          playlistId: playlistId,
-          isShuffle: isShuffle,
-        );
+    if (item.isVideo) {
+      context.pushNamed(
+        'videoPlayer',
+        extra: {'item': item, 'playlist': items},
+      );
+    } else {
+      ref.read(musicPlayerControllerProvider.notifier).playItem(
+            item,
+            queue: items,
+            playlistId: playlistId,
+            isShuffle: isShuffle,
+          );
+      FullMusicPlayerPage.open(context);
+    }
   }
 
   String _formatTotalDuration(List<MediaItemEntity> items) {

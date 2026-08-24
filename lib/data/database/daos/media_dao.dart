@@ -89,4 +89,10 @@ class MediaDao extends DatabaseAccessor<AppDatabase> with _$MediaDaoMixin {
     return (update(mediaItems)..where((tbl) => tbl.id.equals(id)))
         .write(MediaItemsCompanion(duration: Value(durationInSeconds)));
   }
+
+  /// Update artwork path for a specific media item
+  Future<void> updateMediaArtwork(String id, String artworkPath) {
+    return (update(mediaItems)..where((tbl) => tbl.id.equals(id)))
+        .write(MediaItemsCompanion(artworkPath: Value(artworkPath)));
+  }
 }

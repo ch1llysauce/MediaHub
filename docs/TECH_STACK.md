@@ -201,18 +201,23 @@ Declarative Riverpod providers pass repositories and services down to controller
 dependencies:
   flutter:
     sdk: flutter
-  flutter_riverpod: ^2.5.0
+  flutter_riverpod: ^2.5.1
   go_router: ^14.0.0
   drift: ^2.16.0
   sqlite3_flutter_libs: ^0.5.0
   just_audio: ^0.9.36
   audio_service: ^0.18.12
+  audio_session: ^0.1.21
   media_kit: ^1.1.10
   media_kit_video: ^1.2.4
   media_kit_libs_video: ^1.0.4
   dio: ^5.4.0
-  path_provider: ^2.1.2
+  path_provider: ^2.1.5
   permission_handler: ^11.3.0
+  share_plus: ^12.0.2
+  floating: ^6.0.0
+  audio_metadata_reader: ^1.7.1
+  video_thumbnail: ^0.5.6
 ```
 
 ---

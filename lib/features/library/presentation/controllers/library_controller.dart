@@ -81,6 +81,13 @@ class LibraryController extends StateNotifier<LibraryState> {
   }
 
 
+  Future<void> scanIfEmpty() async {
+    final media = await _repository.getAllMedia();
+    if (media.isEmpty) {
+      await scanDeviceMedia();
+    }
+  }
+
   Future<void> scanDeviceMedia() async {
     final granted = await requestStoragePermission();
     if (!granted) return;

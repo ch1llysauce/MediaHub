@@ -15,6 +15,18 @@ class MediaArtworkService {
     return artworkDir;
   }
 
+  /// Fast check if artwork is already cached on disk without performing heavy extraction
+  Future<String?> getCachedArtworkIfPresent(String mediaId) async {
+    try {
+      final artworkDir = await _getArtworkDirectory();
+      final outputPath = p.join(artworkDir.path, '$mediaId.jpg');
+      if (await File(outputPath).exists()) {
+        return outputPath;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   /// Main entry point 
   Future<String?> extractArtwork({
     required String filePath,

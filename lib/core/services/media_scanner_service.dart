@@ -33,6 +33,7 @@ class ScannedMediaFile {
   final int? duration; // seconds
   final String mediaType; // 'audio' or 'video'
   final int fileSize;
+  final DateTime? dateAdded;
 
   ScannedMediaFile({
     required this.path,
@@ -43,6 +44,7 @@ class ScannedMediaFile {
     this.duration,
     required this.mediaType,
     required this.fileSize,
+    this.dateAdded,
   });
 }
 
@@ -95,6 +97,13 @@ class MediaScannerService {
 
       try {
         await for (final entity in directory.list(recursive: true, followLinks: false)) {
+          final normalizedPath = entity.path.replaceAll('\\', '/');
+          if (normalizedPath.contains('/.') ||
+              normalizedPath.contains('/Android/data') ||
+              normalizedPath.contains('/Android/obb')) {
+            continue;
+          }
+
           if (entity is File && isSupportedMediaFile(entity.path)) {
             try {
               final file = entity;
@@ -110,6 +119,7 @@ class MediaScannerService {
                   title: fallbackTitle,
                   mediaType: mediaType,
                   fileSize: stat.size,
+                  dateAdded: stat.modified,
                 ),
               );
             } catch (_) {
@@ -127,13 +137,9 @@ class MediaScannerService {
 
   /// Convert scanned file into Drift MediaItemsCompanion for DB insertion
   Future<MediaItemsCompanion> toCompanion(ScannedMediaFile file) async {
-  final id = file.path.hashCode.abs().toString();
+    final id = file.path.hashCode.abs().toString();
 
-  final artworkPath = await _artworkService.extractArtwork(
-    filePath: file.path,
-    mediaId: id,
-    mediaType: file.mediaType,
-  );
+    final artworkPath = await _artworkService.getCachedArtworkIfPresent(id);
 
   return MediaItemsCompanion.insert(
     id: id,
@@ -146,7 +152,7 @@ class MediaScannerService {
     mediaType: file.mediaType,
     artworkPath: artworkPath != null ? Value(artworkPath) : const Value.absent(),
     fileSize: file.fileSize,
-    dateAdded: DateTime.now(),
+    dateAdded: file.dateAdded ?? DateTime.now(),
     isAvailable: const Value(true),
   );
 }}

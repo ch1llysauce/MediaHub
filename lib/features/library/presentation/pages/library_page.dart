@@ -10,10 +10,35 @@ import '../../../search/presentation/controllers/search_controller.dart';
 import '../controllers/library_controller.dart';
 import '../widgets/sort_filter_sheet.dart';
 
-import '../../../playlists/presentation/widgets/add_to_playlist_dialog.dart';
+import '../../../player/presentation/pages/full_music_player_page.dart';
+import '../../../player/presentation/pages/video_player_page.dart';
+import 'package:mediahub/shared/media_item_options_modal.dart';
 import '../widgets/media_item_tile.dart';
 
 import 'package:path/path.dart' as p;
+
+void _onMediaItemTap(
+  BuildContext context,
+  WidgetRef ref,
+  MediaItemEntity item,
+  List<MediaItemEntity> queue,
+) {
+  if (item.mediaType == 'video') {
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(
+        builder: (context) => VideoPlayerPage(
+          item: item,
+          playlist: queue,
+        ),
+      ),
+    );
+  } else {
+    ref
+        .read(musicPlayerControllerProvider.notifier)
+        .playItem(item, queue: queue);
+    FullMusicPlayerPage.open(context);
+  }
+}
 
 class LibraryPage extends ConsumerStatefulWidget {
   const LibraryPage({super.key});
@@ -27,7 +52,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(libraryControllerProvider.notifier).scanDeviceMedia();
+      ref.read(libraryControllerProvider.notifier).scanIfEmpty();
     });
   }
 
@@ -74,11 +99,6 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
               onPressed: () => context.pushNamed('search'),
             ),
             IconButton(
-              icon: const Icon(Icons.tune_rounded),
-              tooltip: 'Sort & Filter',
-              onPressed: () => SortFilterSheet.show(context),
-            ),
-            IconButton(
               icon: libraryState.isScanning
                   ? const SizedBox(
                       width: 20,
@@ -90,6 +110,11 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
               onPressed: libraryState.isScanning
                   ? null
                   : () => controller.scanDeviceMedia(),
+            ),
+            IconButton(
+              icon: const Icon(Icons.tune_rounded),
+              tooltip: 'Sort & Filter',
+              onPressed: () => SortFilterSheet.show(context),
             ),
           ],
           bottom: const TabBar(
@@ -234,7 +259,12 @@ class _MediaListView extends ConsumerWidget {
     return mediaAsync.when(
       data: (rawItems) {
         final searchState = ref.watch(searchControllerProvider);
-        final items = filterAndSortMediaItems(rawItems, searchState);
+        final items = filterAndSortMediaItems(
+          rawItems,
+          searchState,
+          applyQueryFilter: false,
+          applyMediaTypeFilter: false,
+        );
         if (items.isEmpty) {
           return Center(
             child: Padding(
@@ -297,12 +327,8 @@ class _MediaListView extends ConsumerWidget {
             final item = items[index];
             return MediaItemTile(
               item: item,
-              onTap: () {
-                ref
-                    .read(musicPlayerControllerProvider.notifier)
-                    .playItem(item, queue: items);
-              },
-              onMoreTap: () => AddToPlaylistDialog.show(context, item),
+              onTap: () => _onMediaItemTap(context, ref, item, items),
+              onMoreTap: () => MediaItemOptionsModal.show(context, item),
             );
           },
         );
@@ -494,11 +520,12 @@ class _FolderListViewState extends ConsumerState<_FolderListView> {
                       ),
                     ),
                     TextButton.icon(
-                      onPressed: () {
-                        ref
-                            .read(musicPlayerControllerProvider.notifier)
-                            .playItem(folderItems.first, queue: folderItems);
-                      },
+                      onPressed: () => _onMediaItemTap(
+                        context,
+                        ref,
+                        folderItems.first,
+                        folderItems,
+                      ),
                       icon: const Icon(Icons.play_arrow_rounded),
                       label: const Text('Play All'),
                     ),
@@ -516,13 +543,10 @@ class _FolderListViewState extends ConsumerState<_FolderListView> {
                     final item = folderItems[index];
                     return MediaItemTile(
                       item: item,
-                      onTap: () {
-                        ref
-                            .read(musicPlayerControllerProvider.notifier)
-                            .playItem(item, queue: folderItems);
-                      },
+                      onTap: () =>
+                          _onMediaItemTap(context, ref, item, folderItems),
                       onMoreTap: () =>
-                          AddToPlaylistDialog.show(context, item),
+                          MediaItemOptionsModal.show(context, item),
                     );
                   },
                 ),
@@ -548,14 +572,16 @@ class _FolderListViewState extends ConsumerState<_FolderListView> {
                 .length;
 
             final subtitleParts = <String>[];
-            if (audioCount > 0)
+            if (audioCount > 0) {
               subtitleParts.add(
                 '$audioCount ${audioCount == 1 ? 'song' : 'songs'}',
               );
-            if (videoCount > 0)
+            }
+            if (videoCount > 0) {
               subtitleParts.add(
                 '$videoCount ${videoCount == 1 ? 'video' : 'videos'}',
               );
+            }
 
             return ListTile(
               leading: Container(

@@ -61,13 +61,33 @@ class MiniPlayerWidget extends ConsumerWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (playerState.showUpNextPreview && playerState.nextUpItem != null)
-          UpNextBannerWidget(
-            item: playerState.nextUpItem!,
-            remainingSeconds: remainingSeconds,
-            onPlayNow: () => controller.skipToNext(),
-            onDismiss: () => controller.dismissUpNextPreview(),
-          ),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 350),
+          reverseDuration: const Duration(milliseconds: 300),
+          switchInCurve: Curves.easeOut,
+          switchOutCurve: Curves.easeIn,
+          transitionBuilder: (child, animation) {
+            return FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.25),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
+              ),
+            );
+          },
+          child: (playerState.showUpNextPreview && playerState.nextUpItem != null)
+              ? UpNextBannerWidget(
+                  key: ValueKey(playerState.nextUpItem!.id),
+                  item: playerState.nextUpItem!,
+                  remainingSeconds: remainingSeconds,
+                  onPlayNow: () => controller.skipToNext(),
+                  onDismiss: () => controller.dismissUpNextPreview(),
+                )
+              : const SizedBox.shrink(key: ValueKey('empty_mini_up_next')),
+        ),
         GestureDetector(
           onTap: () {
             if (activeItem.mediaType == 'video') {
@@ -83,13 +103,7 @@ class MiniPlayerWidget extends ConsumerWidget {
                 );
               }
             } else {
-              showModalBottomSheet(
-                context: context,
-                isScrollControlled: true,
-                useSafeArea: true,
-                backgroundColor: Colors.transparent,
-                builder: (context) => const FullMusicPlayerPage(),
-              );
+              FullMusicPlayerPage.open(context);
             }
           },
           child: Container(
@@ -108,6 +122,15 @@ class MiniPlayerWidget extends ConsumerWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(12.0)),
+                  child: LinearProgressIndicator(
+                    value: progress,
+                    minHeight: 2.5,
+                    backgroundColor: Colors.transparent,
+                    valueColor: AlwaysStoppedAnimation<Color>(colorScheme.primary),
+                  ),
+                ),
                 Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 12.0,

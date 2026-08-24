@@ -23,6 +23,8 @@ class MainActivity : AudioServiceActivity() {
 
     private var methodChannel: MethodChannel? = null
 
+    private var isPipAutoEnterEnabled = false
+
     companion object {
         const val ACTION_PIP_PLAY = "com.example.mediahub.PIP_PLAY"
         const val ACTION_PIP_PAUSE = "com.example.mediahub.PIP_PAUSE"
@@ -70,15 +72,21 @@ class MainActivity : AudioServiceActivity() {
             }
         }
 
-        // BAGO: PiP play/pause controls
+        // PiP play/pause controls and auto-enter status
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CONTROLS_CHANNEL)
         methodChannel?.setMethodCallHandler { call, result ->
-            if (call.method == "updatePipActions") {
-                val playing = call.argument<Boolean>("isPlaying") ?: false
-                updatePipParams(playing)
-                result.success(true)
-            } else {
-                result.notImplemented()
+            when (call.method) {
+                "updatePipActions" -> {
+                    val playing = call.argument<Boolean>("isPlaying") ?: false
+                    updatePipParams(playing)
+                    result.success(true)
+                }
+                "setPipAutoEnter" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    setPipAutoEnter(enabled)
+                    result.success(true)
+                }
+                else -> result.notImplemented()
             }
         }
     }
@@ -104,6 +112,29 @@ class MainActivity : AudioServiceActivity() {
             // already unregistered, safe to ignore
         }
         super.onDestroy()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && !isInPictureInPictureMode) {
+            if (!isPipAutoEnterEnabled) {
+                setPipAutoEnter(false)
+            }
+        }
+    }
+
+    fun setPipAutoEnter(enabled: Boolean) {
+        isPipAutoEnterEnabled = enabled
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                val params = PictureInPictureParams.Builder()
+                    .setAutoEnterEnabled(enabled)
+                    .build()
+                setPictureInPictureParams(params)
+            } catch (e: Exception) {
+                android.util.Log.e("PiP", "Error setting auto enter params: ${e.message}")
+            }
+        }
     }
 
     @RequiresApi(Build.VERSION_CODES.O)
@@ -143,12 +174,15 @@ class MainActivity : AudioServiceActivity() {
             )
         }
 
-        val params = PictureInPictureParams.Builder()
+        val builder = PictureInPictureParams.Builder()
             .setActions(actions)
-            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setAutoEnterEnabled(isPipAutoEnterEnabled)
+        }
 
         try {
-            setPictureInPictureParams(params)
+            setPictureInPictureParams(builder.build())
         } catch (e: Exception) {
             // Activity might not be in a valid state yet — safe to ignore
         }

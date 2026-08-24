@@ -25,6 +25,8 @@ void main() {
     when(() => mockAudioService.positionStream).thenAnswer((_) => const Stream.empty());
     when(() => mockAudioService.durationStream).thenAnswer((_) => const Stream.empty());
     when(() => mockAudioService.seek(any())).thenAnswer((_) async {});
+    when(() => mockAudioService.pause()).thenAnswer((_) async {});
+    when(() => mockAudioService.stop()).thenAnswer((_) async {});
 
     controller = MusicPlayerController(mockAudioService, mockPlaylistRepository);
   });

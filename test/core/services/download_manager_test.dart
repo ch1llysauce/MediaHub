@@ -92,6 +92,7 @@ void main() {
 
     final tiktokProvider = TikTokSourceProvider();
     final instagramProvider = InstagramSourceProvider();
+    final twitterProvider = TwitterSourceProvider();
     final facebookProvider = FacebookSourceProvider();
 
     test('TikTokSourceProvider handles TikTok URLs', () {
@@ -109,6 +110,13 @@ void main() {
     test('InstagramSourceProvider handles mobile and share URLs', () {
       expect(instagramProvider.canHandle(Uri.parse('https://m.instagram.com/reel/C12345/')), isTrue);
       expect(instagramProvider.canHandle(Uri.parse('https://www.instagram.com/share/reel/C12345/')), isTrue);
+    });
+
+    test('TwitterSourceProvider handles Twitter and X URLs', () {
+      expect(twitterProvider.canHandle(Uri.parse('https://twitter.com/user/status/123456789')), isTrue);
+      expect(twitterProvider.canHandle(Uri.parse('https://x.com/user/status/123456789')), isTrue);
+      expect(twitterProvider.canHandle(Uri.parse('https://vxtwitter.com/user/status/123456789')), isTrue);
+      expect(twitterProvider.canHandle(Uri.parse('https://example.com/video')), isFalse);
     });
 
     test('FacebookSourceProvider handles Facebook URLs', () {

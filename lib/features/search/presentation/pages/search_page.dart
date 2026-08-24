@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../domain/entities/media_item_entity.dart';
+import '../../../player/presentation/pages/full_music_player_page.dart';
+import '../../../player/presentation/pages/video_player_page.dart';
+import 'package:mediahub/shared/media_item_options_modal.dart';
 import '../../../library/presentation/widgets/media_item_tile.dart';
 import '../../../library/presentation/widgets/sort_filter_sheet.dart';
-import '../../../playlists/presentation/widgets/add_to_playlist_dialog.dart';
 import '../../../player/presentation/controllers/music_player_controller.dart';
 import '../controllers/search_controller.dart';
 
@@ -125,25 +128,26 @@ class _SearchPageState extends ConsumerState<SearchPage> {
             child: searchResultsAsync.when(
               data: (items) {
                 if (items.isEmpty) {
-                  return Center(
+                  return SingleChildScrollView(
                     child: Padding(
-                      padding: const EdgeInsets.all(32.0),
+                      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
+                          const SizedBox(height: 12),
                           Container(
-                            padding: const EdgeInsets.all(24.0),
+                            padding: const EdgeInsets.all(20.0),
                             decoration: BoxDecoration(
                               color: colorScheme.primary.withValues(alpha: 0.1),
                               shape: BoxShape.circle,
                             ),
                             child: Icon(
                               Icons.search_off_rounded,
-                              size: 56,
+                              size: 48,
                               color: colorScheme.primary,
                             ),
                           ),
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 16),
                           Text(
                             searchState.query.isEmpty
                                 ? 'Type to search your media library'
@@ -177,13 +181,8 @@ class _SearchPageState extends ConsumerState<SearchPage> {
                     final item = items[index];
                     return MediaItemTile(
                       item: item,
-                      onTap: () {
-                        ref.read(musicPlayerControllerProvider.notifier).playItem(
-                              item,
-                              queue: items,
-                            );
-                      },
-                      onMoreTap: () => AddToPlaylistDialog.show(context, item),
+                      onTap: () => _onMediaItemTap(context, ref, item, items),
+                      onMoreTap: () => MediaItemOptionsModal.show(context, item),
                     );
                   },
                 );
@@ -197,5 +196,28 @@ class _SearchPageState extends ConsumerState<SearchPage> {
         ],
       ),
     );
+  }
+
+  void _onMediaItemTap(
+    BuildContext context,
+    WidgetRef ref,
+    MediaItemEntity item,
+    List<MediaItemEntity> queue,
+  ) {
+    if (item.mediaType == 'video') {
+      Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute(
+          builder: (context) => VideoPlayerPage(
+            item: item,
+            playlist: queue,
+          ),
+        ),
+      );
+    } else {
+      ref
+          .read(musicPlayerControllerProvider.notifier)
+          .playItem(item, queue: queue);
+      FullMusicPlayerPage.open(context);
+    }
   }
 }

@@ -212,14 +212,22 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
     return null;
   }
 
-  Future<void> _onTrackCompleted() async {
-    if (state.repeatMode == PlayerRepeatMode.one) {
-      await seek(Duration.zero);
-      await _audioService.play();
-      return;
-    }
+  bool _isNavigatingTrack = false;
 
-    await skipToNext(isAutoNext: true);
+  Future<void> _onTrackCompleted() async {
+    if (_isNavigatingTrack) return;
+    _isNavigatingTrack = true;
+    try {
+      if (state.repeatMode == PlayerRepeatMode.one) {
+        await seek(Duration.zero);
+        await _audioService.play();
+        return;
+      }
+
+      await skipToNext(isAutoNext: true);
+    } finally {
+      _isNavigatingTrack = false;
+    }
   }
 
   List<int> _generateShuffledIndices(int length, int startIndex) {
@@ -327,32 +335,33 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
     if (item.mediaType == 'audio') {
       try {
         if (_audioHandler != null) {
-      await _audioHandler!.setMedia(
-        path: item.path,
-        item: audio_service.MediaItem(
-          id: item.id,
-          title: item.title,
-          artist: item.artist ?? 'Unknown Artist',
-          album: item.album,
-          duration: item.duration != null
-              ? Duration(seconds: item.duration!)
-              : null,
-          artUri: item.artworkPath != null
-              ? Uri.file(item.artworkPath!)
-              : null,
-        ),
-      );
-    }
+          await _audioHandler.setMedia(
+            path: item.path,
+            item: audio_service.MediaItem(
+              id: item.id,
+              title: item.title,
+              artist: item.artist ?? 'Unknown Artist',
+              album: item.album,
+              duration: item.duration != null
+                  ? Duration(seconds: item.duration!)
+                  : null,
+              artUri: item.artworkPath != null
+                  ? Uri.file(item.artworkPath!)
+                  : null,
+            ),
+          );
+        }
 
         await _audioService.setFilePath(item.path);
+        await _audioService.player.setVolume(1.0);
         await _audioService.seek(Duration.zero);
         await _audioService.play();
       } catch (_) {
-        // Handle missing or invalid file safely
+        state = state.copyWith(isPlaying: false);
       }
     } else {
       try {
-        await _audioService.stop();
+        await _audioService.pause();
       } catch (_) {}
     }
   }
@@ -360,7 +369,6 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
   Future<void> pauseAudio() async {
     try {
       await _audioService.pause();
-      await _audioService.stop();
     } catch (_) {}
     state = state.copyWith(isPlaying: false);
   }
@@ -386,7 +394,7 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
     }
     await _playlistSub?.cancel();
     _playlistSub = null;
-    await _audioService.stop();
+    await _audioService.pause();
     state = const MusicPlayerState();
   }
 
@@ -401,6 +409,13 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
     state = state.copyWith(position: position);
   }
 
+  Future<void> seekRelative(int seconds) async {
+    final currentSec = state.position.inSeconds;
+    final maxSec = state.duration.inSeconds;
+    final targetSec = (currentSec + seconds).clamp(0, maxSec > 0 ? maxSec : 999999);
+    await seek(Duration(seconds: targetSec));
+  }
+
   Future<void> skipToNext({bool isAutoNext = false}) async {
     _isUpNextDismissed = false;
     if (state.queue.isEmpty) return;
@@ -411,6 +426,7 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
     if (state.isShuffle && state.queue.length > 1) {
       if (currentShuffled.length != state.queue.length) {
         currentShuffled = _generateShuffledIndices(state.queue.length, state.currentIndex);
+        state = state.copyWith(shuffledIndices: currentShuffled);
       }
 
       final currentPos = currentShuffled.indexOf(state.currentIndex);
@@ -419,9 +435,10 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
       if (nextPos >= currentShuffled.length) {
         if (state.repeatMode == PlayerRepeatMode.all) {
           currentShuffled = _generateShuffledIndices(state.queue.length, 0);
+          state = state.copyWith(shuffledIndices: currentShuffled);
           nextPos = 0;
         } else {
-          await _audioService.stop();
+          await _audioService.pause();
           await _audioService.seek(Duration.zero);
           state = state.copyWith(
             isPlaying: false,
@@ -440,7 +457,7 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
         if (state.repeatMode == PlayerRepeatMode.all) {
           nextIndex = 0;
         } else {
-          await _audioService.stop();
+          await _audioService.pause();
           await _audioService.seek(Duration.zero);
           state = state.copyWith(
             isPlaying: false,
