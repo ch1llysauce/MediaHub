@@ -53,20 +53,17 @@ class MediaArtworkService {
       return outputPath;
     }
 
-    final thumbPath = await vt.VideoThumbnail.thumbnailFile(
+    final bytes = await vt.VideoThumbnail.thumbnailData(
       video: videoPath,
-      thumbnailPath: artworkDir.path,
       imageFormat: vt.ImageFormat.JPEG,
       maxWidth: 400,
       quality: 75,
     );
 
-    if (thumbPath != null && await File(thumbPath).exists()) {
-      if (thumbPath != outputPath) {
-        final renamed = await File(thumbPath).rename(outputPath);
-        return renamed.path;
-      }
-      return thumbPath;
+    if (bytes != null && bytes.isNotEmpty) {
+      final file = File(outputPath);
+      await file.writeAsBytes(bytes);
+      return outputPath;
     }
     return null;
   }
@@ -83,6 +80,16 @@ class MediaArtworkService {
   final picture = metadata.pictures.isNotEmpty ? metadata.pictures.first : null;
 
   if (picture == null || picture.bytes.isEmpty) {
+    // Fallback: Check for common album art files in the same folder
+    final parentDir = File(audioPath).parent;
+    final possibleCovers = ['cover.jpg', 'Cover.jpg', 'folder.jpg', 'Folder.jpg', 'cover.png', 'albumart.jpg'];
+    for (final coverName in possibleCovers) {
+      final coverFile = File(p.join(parentDir.path, coverName));
+      if (await coverFile.exists()) {
+        final copied = await coverFile.copy(outputPath);
+        return copied.path;
+      }
+    }
     return null;
   }
 

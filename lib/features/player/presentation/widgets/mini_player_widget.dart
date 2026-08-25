@@ -21,9 +21,9 @@ class MiniPlayerWidget extends ConsumerWidget {
         final videoItem = next.activeItem!;
         final queue = next.queue;
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          // Only push if no VideoPlayerPage is currently active;
-          // the existing page handles track changes internally.
-          if (context.mounted && !VideoPlayerPage.isActive) {
+          if (context.mounted &&
+              !VideoPlayerPage.isActive &&
+              !FullMusicPlayerPage.isActive) {
             Navigator.of(context, rootNavigator: true).push(
               MaterialPageRoute(
                 builder: (context) =>
@@ -185,29 +185,24 @@ class MiniPlayerWidget extends ConsumerWidget {
                       ),
                       IconButton(
                         icon: Icon(
-                          activeItem.mediaType == 'video'
-                              ? Icons.play_circle_fill_rounded
-                              : (playerState.isPlaying
-                                    ? Icons.pause_circle_filled_rounded
-                                    : Icons.play_circle_fill_rounded),
+                          playerState.isPlaying
+                              ? Icons.pause_circle_filled_rounded
+                              : Icons.play_circle_fill_rounded,
                           size: 32,
                           color: colorScheme.primary,
                         ),
                         onPressed: () {
-                          if (activeItem.mediaType == 'video') {
-                            // Only push if no VideoPlayerPage is currently active
-                            if (!VideoPlayerPage.isActive) {
-                              Navigator.of(context, rootNavigator: true).push(
-                                MaterialPageRoute(
-                                  builder: (context) => VideoPlayerPage(
-                                    item: activeItem,
-                                    playlist: playerState.queue,
-                                  ),
-                                ),
-                              );
-                            }
+                          if (playerState.isPlaying) {
+                            controller.pauseAudio();
                           } else {
-                            controller.togglePlayPause();
+                            if (activeItem.mediaType == 'video') {
+                              controller.playVideoAsAudio(
+                                activeItem,
+                                position: playerState.position,
+                              );
+                            } else {
+                              controller.togglePlayPause();
+                            }
                           }
                         },
                       ),

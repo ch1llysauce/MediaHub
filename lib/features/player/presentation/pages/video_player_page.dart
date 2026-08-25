@@ -14,6 +14,7 @@ import 'package:video_thumbnail/video_thumbnail.dart' as vt;
 import '../../../../core/providers/providers.dart';
 import '../../../../domain/entities/media_item_entity.dart';
 import '../controllers/music_player_controller.dart';
+import '../pages/full_music_player_page.dart';
 import '../widgets/up_next_banner_widget.dart';
 import '../../../favorites/presentation/controllers/favorites_controller.dart';
 import '../../../history/presentation/controllers/history_controller.dart';
@@ -40,6 +41,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
   late final VideoController _videoController;
 
   bool _isDraggingSlider = false;
+  bool _canPop = false;
   Duration _previewPosition = Duration.zero;
   Uint8List? _previewThumbnailBytes;
   Timer? _previewDebounceTimer;
@@ -56,6 +58,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
     'com.example.mediahub/pip_controls',
   );
   bool _pipEligible = false;
+  bool _transitionedToBackgroundAudio = false;
 
   late MediaItemEntity _currentItem;
   late List<MediaItemEntity> _playlist;
@@ -136,6 +139,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
     _currentIndex = _playlist.indexWhere((e) => e.id == _currentItem.id);
     if (_currentIndex < 0) _currentIndex = 0;
 
+    ref.read(musicPlayerControllerProvider.notifier).pauseAudio();
     ref.read(musicPlayerControllerProvider.notifier).playItem(
           _currentItem,
           queue: _playlist,
@@ -175,11 +179,9 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
       if (!mounted) return;
 
       // Once the video has completed, ignore all further position events
-      // to prevent overwriting the saved position-0 with stale end-values
       if (_isCompleted) return;
 
       // While seeking to a saved position, block ALL position updates
-      // to prevent mpv's zero-flush events from corrupting state
       if (_isSeekingToHistory) return;
 
       // After seeking, if mpv sends a 0-position event but we have a
@@ -451,6 +453,13 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
       if (hasNextLocal) {
         _currentIndex++;
         _currentItem = _playlist[_currentIndex];
+
+        // If next item is audio, navigate to the music player page
+        if (_currentItem.isAudio) {
+          controller.playItem(_currentItem, queue: _playlist);
+          return; // ref.listen handles the navigation to FullMusicPlayerPage
+        }
+
         controller.playItem(_currentItem, queue: _playlist);
         await _playCurrentMedia();
       } else {
@@ -481,6 +490,13 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
     if (hasPreviousLocal && _position.inSeconds <= 3) {
       _currentIndex--;
       _currentItem = _playlist[_currentIndex];
+
+      // If previous item is audio, navigate to the music player page
+      if (_currentItem.isAudio) {
+        controller.playItem(_currentItem, queue: _playlist);
+        return; // ref.listen handles the navigation to FullMusicPlayerPage
+      }
+
       controller.playItem(_currentItem, queue: _playlist);
       await _playCurrentMedia();
     } else {
@@ -717,13 +733,30 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
       }
     }
 
-    ref.read(musicPlayerControllerProvider.notifier).pauseAudio();
-    try {
-      await _player.pause();
-      await _player.stop();
-    } catch (_) {}
+    final activeItem = ref.read(musicPlayerControllerProvider).activeItem;
+    if (activeItem?.isVideo == true && _isPlaying && !_isCompleted) {
+      _transitionedToBackgroundAudio = true;
+      try {
+        await _player.pause();
+        await _player.stop();
+      } catch (_) {}
+      await ref
+          .read(musicPlayerControllerProvider.notifier)
+          .playVideoAsAudio(_currentItem, position: _position);
+    } else {
+      if (activeItem?.isVideo == true) {
+        ref.read(musicPlayerControllerProvider.notifier).pauseAudio();
+      }
+      try {
+        await _player.pause();
+        await _player.stop();
+      } catch (_) {}
+    }
 
     if (mounted) {
+      setState(() {
+        _canPop = true;
+      });
       Navigator.of(context).pop();
     }
   }
@@ -764,7 +797,12 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
       }
     }
 
-    ref.read(musicPlayerControllerProvider.notifier).pauseAudio();
+    if (!_transitionedToBackgroundAudio) {
+      final activeItemDispose = ref.read(musicPlayerControllerProvider).activeItem;
+      if (activeItemDispose?.isVideo == true) {
+        ref.read(musicPlayerControllerProvider.notifier).pauseAudio();
+      }
+    }
     _player.pause();
     _player.stop();
     SystemChrome.setPreferredOrientations([
@@ -813,7 +851,27 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
       next,
     ) {
       final newItem = next.activeItem;
-      if (newItem == null || newItem.mediaType == 'audio') {
+      if (newItem == null) return;
+
+      if (newItem.isAudio) {
+        if (FullMusicPlayerPage.isActive) return;
+        if (previous?.activeItem?.id == newItem.id) return;
+
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          if (!mounted) return;
+          _disarmPipOnLeave();
+          try {
+            await _player.pause();
+            await _player.stop();
+          } catch (_) {}
+          if (!mounted) return;
+          setState(() {
+            _canPop = true;
+          });
+          if (context.mounted && !FullMusicPlayerPage.isActive) {
+            FullMusicPlayerPage.replace(context);
+          }
+        });
         return;
       }
 
@@ -821,6 +879,10 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
         setState(() {
           _currentItem = newItem;
           _isUpNextDismissed = false;
+
+          if (next.queue.isNotEmpty) {
+            _playlist = next.queue;
+          }
 
           _currentIndex = _playlist.indexWhere((item) => item.id == newItem.id);
 
@@ -840,7 +902,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
     final primaryColor = Theme.of(context).colorScheme.primary;
 
     return PopScope(
-      canPop: false,
+      canPop: _canPop,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
         await _onBackPressed();

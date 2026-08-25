@@ -23,6 +23,9 @@ void _onMediaItemTap(
   MediaItemEntity item,
   List<MediaItemEntity> queue,
 ) {
+  ref
+      .read(musicPlayerControllerProvider.notifier)
+      .playItem(item, queue: queue);
   if (item.mediaType == 'video') {
     Navigator.of(context, rootNavigator: true).push(
       MaterialPageRoute(
@@ -33,9 +36,6 @@ void _onMediaItemTap(
       ),
     );
   } else {
-    ref
-        .read(musicPlayerControllerProvider.notifier)
-        .playItem(item, queue: queue);
     FullMusicPlayerPage.open(context);
   }
 }
@@ -240,7 +240,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   }
 }
 
-class _MediaListView extends ConsumerWidget {
+class _MediaListView extends ConsumerStatefulWidget {
   final StreamProvider<List<MediaItemEntity>> streamProvider;
   final String emptyTitle;
   final String emptySubtitle;
@@ -252,10 +252,30 @@ class _MediaListView extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final mediaAsync = ref.watch(streamProvider);
+  ConsumerState<_MediaListView> createState() => _MediaListViewState();
+}
+
+class _MediaListViewState extends ConsumerState<_MediaListView> {
+  late final ScrollController _scrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaAsync = ref.watch(widget.streamProvider);
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+
     return mediaAsync.when(
       data: (rawItems) {
         final searchState = ref.watch(searchControllerProvider);
@@ -289,7 +309,7 @@ class _MediaListView extends ConsumerWidget {
                   ),
                   const SizedBox(height: 20),
                   Text(
-                    emptyTitle,
+                    widget.emptyTitle,
                     textAlign: TextAlign.center,
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
@@ -297,7 +317,7 @@ class _MediaListView extends ConsumerWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    emptySubtitle,
+                    widget.emptySubtitle,
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: colorScheme.onSurfaceVariant,
@@ -319,18 +339,39 @@ class _MediaListView extends ConsumerWidget {
           );
         }
 
-        return ListView.separated(
-          itemCount: items.length,
-          separatorBuilder: (context, index) =>
-              const Divider(height: 1, indent: 76),
-          itemBuilder: (context, index) {
-            final item = items[index];
-            return MediaItemTile(
-              item: item,
-              onTap: () => _onMediaItemTap(context, ref, item, items),
-              onMoreTap: () => MediaItemOptionsModal.show(context, item),
-            );
-          },
+        return Stack(
+          children: [
+            // List View
+            ListView.separated(
+              controller: _scrollController,
+              padding: const EdgeInsets.only(right: 24.0),
+              itemCount: items.length,
+              separatorBuilder: (context, index) =>
+                  const Divider(height: 1, indent: 76),
+              itemBuilder: (context, index) {
+                final item = items[index];
+                return MediaItemTile(
+                  item: item,
+                  onTap: () => _onMediaItemTap(context, ref, item, items),
+                  onMoreTap: () => MediaItemOptionsModal.show(context, item),
+                );
+              },
+            ),
+
+            // Fast Scrollbar overlay
+            if (items.isNotEmpty)
+              Positioned(
+                top: 0,
+                right: 0,
+                bottom: 0,
+                width: 24, // Touch hit area
+                child: FastScrollbar(
+                  controller: _scrollController,
+                  items: items,
+                  sortOption: searchState.sortOption,
+                ),
+              ),
+          ],
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -364,6 +405,246 @@ class _MediaListView extends ConsumerWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class FastScrollbar extends StatefulWidget {
+  final ScrollController controller;
+  final List<MediaItemEntity> items;
+  final MediaSortOption sortOption;
+
+  const FastScrollbar({
+    super.key,
+    required this.controller,
+    required this.items,
+    required this.sortOption,
+  });
+
+  @override
+  State<FastScrollbar> createState() => _FastScrollbarState();
+}
+
+class _FastScrollbarState extends State<FastScrollbar> {
+  bool _isDragging = false;
+  String _scrollLabel = '';
+  double _dragY = 0.0;
+  int _lastJumpTimestamp = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onScroll);
+  }
+
+  @override
+  void didUpdateWidget(FastScrollbar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onScroll);
+      widget.controller.addListener(_onScroll);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onScroll);
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_isDragging && mounted) {
+      setState(() {});
+    }
+  }
+
+  void _onDragUpdate(double localY, double trackHeight) {
+    if (!widget.controller.hasClients || widget.items.isEmpty) return;
+
+    final fraction = (localY / trackHeight).clamp(0.0, 1.0);
+    final targetOffset = fraction * widget.controller.position.maxScrollExtent;
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    // Limit jumping to once every 24ms (approx. 40fps) to prevent viewport layout jank
+    if (now - _lastJumpTimestamp > 24) {
+      if ((widget.controller.offset - targetOffset).abs() > 2.0) {
+        widget.controller.jumpTo(targetOffset);
+      }
+      _lastJumpTimestamp = now;
+    }
+
+    final index = (fraction * (widget.items.length - 1)).clamp(0, widget.items.length - 1).toInt();
+    final item = widget.items[index];
+
+    String label = '';
+    switch (widget.sortOption) {
+      case MediaSortOption.title:
+        label = item.title.trim().isNotEmpty
+            ? item.title.trim().substring(0, 1).toUpperCase()
+            : '#';
+        break;
+      case MediaSortOption.artist:
+        final artist = item.artist?.trim() ?? '';
+        label = artist.isNotEmpty
+            ? artist.substring(0, 1).toUpperCase()
+            : '?';
+        break;
+      case MediaSortOption.duration:
+        final seconds = item.duration ?? 0;
+        final minutes = seconds ~/ 60;
+        label = minutes == 0 ? '<1m' : '${minutes}m';
+        break;
+      case MediaSortOption.dateAdded:
+        final months = [
+          'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+        ];
+        final date = item.dateAdded;
+        label = '${months[date.month - 1]} ${date.year}';
+        break;
+    }
+
+    setState(() {
+      _isDragging = true;
+      _scrollLabel = label;
+      _dragY = localY;
+    });
+  }
+
+  void _onDragEnd(double trackHeight) {
+    setState(() {
+      _isDragging = false;
+    });
+    if (widget.controller.hasClients && widget.items.isNotEmpty) {
+      final fraction = (_dragY / trackHeight).clamp(0.0, 1.0);
+      final targetOffset = fraction * widget.controller.position.maxScrollExtent;
+      if ((widget.controller.offset - targetOffset).abs() > 1.0) {
+        widget.controller.jumpTo(targetOffset);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final trackHeight = constraints.maxHeight;
+
+        double handleY = 0.0;
+        const handleHeight = 48.0;
+        if (widget.controller.hasClients &&
+            widget.controller.position.maxScrollExtent > 0) {
+          final maxScroll = widget.controller.position.maxScrollExtent;
+          final currentScroll = widget.controller.offset.clamp(0.0, maxScroll);
+          handleY = (currentScroll / maxScroll) * (trackHeight - handleHeight);
+        }
+
+        // Keep bubble bounded inside track height
+        final bubbleTop = (_dragY - 24.0).clamp(12.0, trackHeight - 64.0);
+
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // Gesture Detector over the entire track
+            GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onVerticalDragStart: (details) {
+                _onDragUpdate(details.localPosition.dy, trackHeight);
+              },
+              onVerticalDragUpdate: (details) {
+                _onDragUpdate(details.localPosition.dy, trackHeight);
+              },
+              onVerticalDragEnd: (_) {
+                _onDragEnd(trackHeight);
+              },
+              onTapDown: (details) {
+                _onDragUpdate(details.localPosition.dy, trackHeight);
+              },
+              onTapUp: (_) {
+                _onDragEnd(trackHeight);
+              },
+              child: SizedBox(
+                width: 24, // Explicit fixed width for the scrollbar area
+                height: double.infinity,
+                child: Stack(
+                  alignment: Alignment.centerRight,
+                  children: [
+                    // Thin Track Guideline
+                    Positioned(
+                      right: 9,
+                      top: 12,
+                      bottom: 12,
+                      width: 2,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: colorScheme.onSurface.withOpacity(0.03),
+                          borderRadius: BorderRadius.circular(1),
+                        ),
+                      ),
+                    ),
+                    // Elegant Thin Scrollbar Handle
+                    Positioned(
+                      top: handleY,
+                      right: 8,
+                      width: 4, // Thinner handle
+                      height: handleHeight,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 100),
+                        decoration: BoxDecoration(
+                          color: _isDragging
+                              ? colorScheme.primary
+                              : colorScheme.onSurface.withOpacity(0.25),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Letter/Sort Bubble following the thumb vertically on the left of the scrollbar
+            if (_isDragging && _scrollLabel.isNotEmpty)
+              Positioned(
+                top: bubbleTop,
+                right: 32, // Float next to the scrollbar
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: colorScheme.primaryContainer,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(12),
+                      bottomLeft: Radius.circular(12),
+                      topRight: Radius.circular(12),
+                      bottomRight: Radius.zero, // speech-bubble style
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 8,
+                        offset: const Offset(-2, 4),
+                      ),
+                    ],
+                    border: Border.all(
+                      color: colorScheme.primary.withOpacity(0.3),
+                      width: 1,
+                    ),
+                  ),
+                  child: Text(
+                    _scrollLabel,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }

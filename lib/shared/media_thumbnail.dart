@@ -26,7 +26,10 @@ class MediaThumbnail extends StatelessWidget {
         width: size,
         height: size,
         color: colorScheme.primaryContainer,
-        child: (artworkPath != null && artworkPath!.isNotEmpty)
+        child: (artworkPath != null &&
+                artworkPath!.isNotEmpty &&
+                artworkPath != 'processing' &&
+                artworkPath != 'failed')
             ? Image.file(
                 File(artworkPath!),
                 width: size,

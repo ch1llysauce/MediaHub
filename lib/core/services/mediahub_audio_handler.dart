@@ -14,42 +14,25 @@ class MediaHubAudioHandler extends BaseAudioHandler
   Future<void> Function()? onSkipToNext;
   Future<void> Function()? onSkipToPrevious;
   Future<void> Function()? onStopPlayer;
+  Future<void> Function()? onToggleFavorite;
+
+  bool _isCurrentFavorite = false;
 
   MediaHubAudioHandler(this.audioService) {
     _init();
   }
 
+  void updateFavoriteStatus(bool isFavorite) {
+    if (_isCurrentFavorite != isFavorite) {
+      _isCurrentFavorite = isFavorite;
+      _updatePlaybackState();
+    }
+  }
+
   void _init() {
     _playerStateSub =
         audioService.playerStateStream.listen((playerState) {
-      final processingState = switch (playerState.processingState) {
-        ProcessingState.idle => AudioProcessingState.idle,
-        ProcessingState.loading => AudioProcessingState.loading,
-        ProcessingState.buffering => AudioProcessingState.buffering,
-        ProcessingState.ready => AudioProcessingState.ready,
-        ProcessingState.completed => AudioProcessingState.completed,
-      };
-
-      playbackState.add(
-        PlaybackState(
-          controls: [
-            MediaControl.skipToPrevious,
-            if (playerState.playing)
-              MediaControl.pause
-            else
-              MediaControl.play,
-            MediaControl.skipToNext,
-          ],
-          systemActions: const {
-            MediaAction.seek,
-          },
-          processingState: processingState,
-          playing: playerState.playing,
-          updatePosition: audioService.player.position,
-          bufferedPosition: audioService.player.bufferedPosition,
-          speed: audioService.player.speed,
-        ),
-      );
+      _updatePlaybackState();
     });
 
     _positionSub =
@@ -62,6 +45,54 @@ class MediaHubAudioHandler extends BaseAudioHandler
         ),
       );
     });
+  }
+
+  void _updatePlaybackState() {
+    final playerState = audioService.player.playerState;
+    final processingState = switch (playerState.processingState) {
+      ProcessingState.idle => AudioProcessingState.idle,
+      ProcessingState.loading => AudioProcessingState.loading,
+      ProcessingState.buffering => AudioProcessingState.buffering,
+      ProcessingState.ready => AudioProcessingState.ready,
+      ProcessingState.completed => AudioProcessingState.completed,
+    };
+
+    final favoriteControl = MediaControl.custom(
+      androidIcon: _isCurrentFavorite
+          ? 'drawable/ic_action_favorite'
+          : 'drawable/ic_action_favorite_border',
+      label: 'Favorite',
+      name: 'toggleFavorite',
+    );
+
+    final closeControl = MediaControl.custom(
+      androidIcon: 'drawable/ic_action_close',
+      label: 'Close',
+      name: 'closePlayer',
+    );
+
+    playbackState.add(
+      PlaybackState(
+        controls: [
+          favoriteControl,
+          MediaControl.skipToPrevious,
+          if (playerState.playing)
+            MediaControl.pause
+          else
+            MediaControl.play,
+          MediaControl.skipToNext,
+          closeControl,
+        ],
+        systemActions: const {
+          MediaAction.seek,
+        },
+        processingState: processingState,
+        playing: playerState.playing,
+        updatePosition: audioService.player.position,
+        bufferedPosition: audioService.player.bufferedPosition,
+        speed: audioService.player.speed,
+      ),
+    );
   }
 
   Future<void> setMedia({
@@ -115,6 +146,16 @@ class MediaHubAudioHandler extends BaseAudioHandler
     await audioService.stop();
     await onStopPlayer?.call();
     await super.onTaskRemoved();
+  }
+
+  @override
+  Future<dynamic> customAction(String name, [Map<String, dynamic>? extras]) async {
+    if (name == 'toggleFavorite') {
+      await onToggleFavorite?.call();
+    } else if (name == 'closePlayer') {
+      await stop();
+    }
+    return await super.customAction(name, extras);
   }
 
   Future<void> disposeHandler() async {

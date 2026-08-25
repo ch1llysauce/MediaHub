@@ -184,13 +184,11 @@ List<MediaItemEntity> filterAndSortMediaItems(
 }
 
 /// Provider for filtered & sorted search results across all media
-final searchResultsProvider = StreamProvider<List<MediaItemEntity>>((ref) {
+final searchResultsProvider = Provider<AsyncValue<List<MediaItemEntity>>>((ref) {
   final searchState = ref.watch(searchControllerProvider);
   final allMediaAsync = ref.watch(allMediaStreamProvider);
 
-  return allMediaAsync.when(
-    data: (items) => Stream.value(filterAndSortMediaItems(items, searchState)),
-    loading: () => const Stream.empty(),
-    error: (_, __) => const Stream.empty(),
-  );
+  return allMediaAsync.whenData((items) {
+    return filterAndSortMediaItems(items, searchState);
+  });
 });

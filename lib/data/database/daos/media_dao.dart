@@ -95,4 +95,10 @@ class MediaDao extends DatabaseAccessor<AppDatabase> with _$MediaDaoMixin {
     return (update(mediaItems)..where((tbl) => tbl.id.equals(id)))
         .write(MediaItemsCompanion(artworkPath: Value(artworkPath)));
   }
+
+  /// Reset all 'failed' artwork statuses so they can be retried on the next scan
+  Future<void> resetFailedArtworks() async {
+    await (update(mediaItems)..where((tbl) => tbl.artworkPath.equals('failed')))
+        .write(const MediaItemsCompanion(artworkPath: Value(null)));
+  }
 }

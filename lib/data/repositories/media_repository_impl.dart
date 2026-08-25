@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
+import 'package:media_kit/media_kit.dart';
 
 import '../../core/services/media_artwork_service.dart';
 import '../../core/services/media_scanner_service.dart';
@@ -105,10 +106,14 @@ class MediaRepositoryImpl implements MediaRepository {
     // Reconcile and mark missing files as unavailable based on physical storage check
     await _mediaDao.reconcileMissingFiles();
 
-    // Run background duration and artwork extractions asynchronously without delaying UI scan completion
-    unawaited(_populateAllMissingDurations());
-    unawaited(_populateAllMissingArtworks());
+    // Reset any stuck or previously failed artworks so the new logic can try again.
+    await _mediaDao.resetFailedArtworks();
+
+    // Run background duration and artwork extractions sequentially to prevent resource contention
+    unawaited(_populateMetadataAndArtworksSequentially());
   }
+
+
 
   @override
   Future<void> scanSingleFile(String filePath) async {
@@ -144,49 +149,68 @@ class MediaRepositoryImpl implements MediaRepository {
 
   final MediaArtworkService _artworkService = MediaArtworkService();
 
-  Future<void> _populateAllMissingArtworks() async {
+  Future<void> _populateMetadataAndArtworksSequentially() async {
     try {
       final allMedia = await _mediaDao.getAllMedia();
-      final missingArtworks = allMedia
-          .where((m) => m.artworkPath == null || m.artworkPath!.isEmpty)
-          .toList();
+      
+      // OPTIMIZATION: Process audio files first because they are instantly fast (no 500ms delay).
+      // This way, thousands of music thumbnails appear instantly instead of queuing behind slow videos.
+      final audioMedia = allMedia.where((m) => m.mediaType == 'audio').toList();
+      final videoMedia = allMedia.where((m) => m.mediaType == 'video').toList();
+      final sortedMedia = [...audioMedia, ...videoMedia];
 
-      if (missingArtworks.isNotEmpty) {
-        for (final media in missingArtworks) {
-          try {
-            final file = File(media.path);
-            if (await file.exists()) {
-              final artworkPath = await _artworkService.extractArtwork(
-                filePath: media.path,
-                mediaId: media.id,
-                mediaType: media.mediaType,
-              );
-              if (artworkPath != null) {
-                await _mediaDao.updateMediaArtwork(media.id, artworkPath);
-              }
-            }
-          } catch (_) {}
+      for (final media in sortedMedia) {
+        final path = media.artworkPath;
+        // Treat 'processing' as missing since any leftover 'processing' tags from a previous app session are stuck.
+        final isArtworkMissing = path == null || path.isEmpty || path == 'processing' || (path != 'failed' && !(await File(path).exists()));
+        final isDurationMissing = media.duration == null || media.duration == 0;
+
+        if (!isArtworkMissing && !isDurationMissing) {
+          continue; // Everything is present
         }
-      }
-    } catch (_) {}
-  }
 
-  Future<void> _populateAllMissingDurations() async {
-    try {
-      final allMedia = await _mediaDao.getAllMedia();
-      final missingAudio = allMedia.where((m) => m.mediaType == 'audio' && (m.duration == null || m.duration == 0)).toList();
+        final file = File(media.path);
+        if (!await file.exists()) {
+          continue;
+        }
 
-      if (missingAudio.isNotEmpty) {
-        for (final media in missingAudio) {
+        // 1. Extract Duration (Pure Dart, incredibly fast, no hardware decoding)
+        if (isDurationMissing) {
           try {
-            final file = File(media.path);
-            if (await file.exists()) {
-              final metadata = readMetadata(file);
-              if (metadata.duration != null && metadata.duration!.inSeconds > 0) {
-                await _mediaDao.updateMediaDuration(media.id, metadata.duration!.inSeconds);
-              }
+            final metadata = readMetadata(file);
+            if (metadata.duration != null && metadata.duration!.inSeconds > 0) {
+              await _mediaDao.updateMediaDuration(media.id, metadata.duration!.inSeconds);
             }
-          } catch (_) {}
+          } catch (_) {
+            // Ignore format errors (e.g., MKV)
+          }
+        }
+
+        // 2. Extract Artwork (Native plugin, requires throttling)
+        if (isArtworkMissing && path != 'failed') {
+          try {
+            await _mediaDao.updateMediaArtwork(media.id, 'processing');
+
+            final artworkPath = await _artworkService.extractArtwork(
+              filePath: media.path,
+              mediaId: media.id,
+              mediaType: media.mediaType,
+            ).timeout(const Duration(seconds: 4), onTimeout: () => null);
+            
+            if (artworkPath != null) {
+              await _mediaDao.updateMediaArtwork(media.id, artworkPath);
+            } else {
+              await _mediaDao.updateMediaArtwork(media.id, 'failed');
+            }
+
+            // Throttling: Protect native file descriptors and UI thread ONLY for videos.
+            // Audio thumbnail extraction is pure Dart and very fast.
+            if (media.mediaType == 'video') {
+              await Future.delayed(const Duration(milliseconds: 500));
+            }
+          } catch (_) {
+            await _mediaDao.updateMediaArtwork(media.id, 'failed');
+          }
         }
       }
     } catch (_) {}

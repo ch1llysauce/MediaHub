@@ -89,6 +89,37 @@ class PlaylistDetailPage extends ConsumerWidget {
     );
   }
 
+  void _confirmRemoveTrack(BuildContext context, WidgetRef ref, String trackTitle, String trackId) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Remove from Playlist'),
+        content: Text(
+          'Remove "$trackTitle" from this playlist?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.errorContainer,
+              foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
+            ),
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await ref
+                  .read(playlistDetailControllerProvider(playlistId).notifier)
+                  .removeTrack(trackId);
+            },
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _playMediaItem(
     BuildContext context,
     WidgetRef ref,
@@ -356,11 +387,7 @@ class PlaylistDetailPage extends ConsumerWidget {
                           IconButton(
                             icon: const Icon(Icons.remove_circle_outline_rounded, size: 20),
                             tooltip: 'Remove from playlist',
-                            onPressed: () {
-                              ref
-                                  .read(playlistDetailControllerProvider(playlistId).notifier)
-                                  .removeTrack(item.id);
-                            },
+                            onPressed: () => _confirmRemoveTrack(context, ref, item.title, item.id),
                           ),
                           ReorderableDragStartListener(
                             index: index,

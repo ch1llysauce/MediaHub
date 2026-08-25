@@ -115,7 +115,7 @@ void main() {
     await controller.skipToNext();
 
     expect(controller.state.isPlaying, false);
-    verify(() => mockAudioService.stop()).called(1);
+    verify(() => mockAudioService.pause()).called(1);
   });
 
   test('peekNextItem returns correct upcoming item and identifies video mediaType', () async {

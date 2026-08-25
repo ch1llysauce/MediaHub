@@ -13,6 +13,8 @@ import '../../../../domain/repositories/history_repository.dart';
 import '../../../../domain/repositories/media_repository.dart';
 import '../../../../domain/repositories/playlist_repository.dart';
 import '../../../history/presentation/controllers/history_controller.dart';
+import '../../../favorites/presentation/controllers/favorites_controller.dart';
+
 
 enum PlayerRepeatMode { off, all, one }
 
@@ -314,21 +316,34 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
       newShuffled = const [];
     }
 
-    final savedPos = await _historyRepository?.getPlaybackPosition(item.id) ?? 0;
-    final runtimePos = state.activeItem?.id == item.id ? state.position.inSeconds : 0;
-    final effectiveSavedPos = runtimePos > savedPos ? runtimePos : savedPos;
+    final snapshotIndex = targetIndex;
+    final isSameItem = state.activeItem?.id == item.id;
+    final runtimePos = isSameItem ? state.position.inSeconds : 0;
 
+    // Update state synchronously to prevent concurrent/race conditions!
     state = state.copyWith(
       activeItem: item,
       queue: newQueue,
-      currentIndex: targetIndex,
+      currentIndex: snapshotIndex,
       isShuffle: shouldShuffle,
       shuffledIndices: newShuffled,
-      position: Duration(seconds: effectiveSavedPos),
+      position: Duration(seconds: runtimePos),
       duration: Duration(seconds: item.duration ?? 0),
       activePlaylistId: playlistId,
       clearActivePlaylistId: playlistId == null,
     );
+
+    // Save/check history asynchronously
+    final savedPos = await _historyRepository?.getPlaybackPosition(item.id) ?? 0;
+
+    if (state.activeItem?.id != item.id) return; // Guard!
+
+    final effectiveSavedPos = runtimePos > savedPos ? runtimePos : savedPos;
+    if (effectiveSavedPos > 0) {
+      state = state.copyWith(
+        position: Duration(seconds: effectiveSavedPos),
+      );
+    }
 
     _historyRepository?.recordPlayback(item.id, playbackPosition: savedPos > 0 ? savedPos : null);
 
@@ -352,23 +367,35 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
           );
         }
 
+        if (state.activeItem?.id != item.id) return; // Guard!
+
         await _audioService.setFilePath(item.path);
+
+        if (state.activeItem?.id != item.id) return; // Guard!
+
         await _audioService.player.setVolume(1.0);
         await _audioService.seek(Duration.zero);
+
+        if (state.activeItem?.id != item.id) return; // Guard!
+
         await _audioService.play();
       } catch (_) {
-        state = state.copyWith(isPlaying: false);
+        if (state.activeItem?.id == item.id) {
+          state = state.copyWith(isPlaying: false);
+        }
       }
     } else {
       try {
-        await _audioService.pause();
+        await _audioService.stop();
+        await _audioHandler?.stop();
       } catch (_) {}
     }
   }
 
   Future<void> pauseAudio() async {
     try {
-      await _audioService.pause();
+      await _audioService.stop();
+      await _audioHandler?.stop();
     } catch (_) {}
     state = state.copyWith(isPlaying: false);
   }
@@ -529,6 +556,46 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
     state = state.copyWith(repeatMode: nextMode);
   }
 
+  Future<void> playVideoAsAudio(MediaItemEntity item, {Duration? position}) async {
+    try {
+      if (_audioHandler != null) {
+        await _audioHandler.setMedia(
+          path: item.path,
+          item: audio_service.MediaItem(
+            id: item.id,
+            title: item.title,
+            artist: item.artist ?? 'Video File',
+            album: item.album,
+            duration: item.duration != null
+                ? Duration(seconds: item.duration!)
+                : null,
+            artUri: item.artworkPath != null
+                ? Uri.file(item.artworkPath!)
+                : null,
+          ),
+        );
+      }
+
+      await _audioService.setFilePath(item.path);
+      await _audioService.player.setVolume(1.0);
+      if (position != null) {
+        await _audioService.seek(position);
+      } else {
+        await _audioService.seek(Duration.zero);
+      }
+      await _audioService.play();
+
+      state = state.copyWith(
+        activeItem: item,
+        isPlaying: true,
+        position: position ?? Duration.zero,
+        duration: Duration(seconds: item.duration ?? 0),
+      );
+    } catch (_) {
+      state = state.copyWith(isPlaying: false);
+    }
+  }
+
   @override
   void dispose() {
     _playerStateSub?.cancel();
@@ -539,7 +606,8 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
   }
 }
 
-final musicPlayerControllerProvider =
+final StateNotifierProvider<MusicPlayerController, MusicPlayerState>
+    musicPlayerControllerProvider =
     StateNotifierProvider<MusicPlayerController, MusicPlayerState>((ref) {
   final audioService = ref.watch(audioPlayerServiceProvider);
   final audioHandler = ref.watch(audioHandlerProvider);
@@ -547,11 +615,52 @@ final musicPlayerControllerProvider =
   final historyRepo = ref.watch(historyRepositoryProvider);
   final mediaRepo = ref.watch(mediaRepositoryProvider);
   
-  return MusicPlayerController(
+  final controller = MusicPlayerController(
     audioService,
     playlistRepo,
     historyRepo,
     mediaRepo,
     audioHandler,
   );
+
+  // Set up the favorite toggler callback
+  audioHandler.onToggleFavorite = () async {
+    final activeItem = controller.state.activeItem;
+    if (activeItem != null) {
+      await ref.read(favoritesControllerProvider).toggleFavorite(activeItem.id);
+    }
+  };
+
+  // Sync favorite status of the active item to the audio handler
+  ref.listen<AsyncValue<Set<String>>>(favoriteMediaIdsStreamProvider, (prev, next) {
+    final activeItem = controller.state.activeItem;
+    if (activeItem != null) {
+      final isFav = next.value?.contains(activeItem.id) ?? false;
+      audioHandler.updateFavoriteStatus(isFav);
+    } else {
+      audioHandler.updateFavoriteStatus(false);
+    }
+  });
+
+  // Sync favorite status when the active item itself changes
+  final listener = controller.addListener((state) {
+    final activeItem = state.activeItem;
+    if (activeItem != null) {
+      final favoriteIds = ref.read(favoriteMediaIdsStreamProvider).value;
+      final isFav = favoriteIds?.contains(activeItem.id) ?? false;
+      audioHandler.updateFavoriteStatus(isFav);
+    } else {
+      audioHandler.updateFavoriteStatus(false);
+    }
+  });
+  ref.onDispose(listener);
+
+  // Initial sync on creation
+  final initialFavorites = ref.read(favoriteMediaIdsStreamProvider).value;
+  final initialActiveItem = controller.state.activeItem;
+  if (initialActiveItem != null && initialFavorites != null) {
+    audioHandler.updateFavoriteStatus(initialFavorites.contains(initialActiveItem.id));
+  }
+
+  return controller;
 });

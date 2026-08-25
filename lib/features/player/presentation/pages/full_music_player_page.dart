@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../shared/media_thumbnail.dart';
 import '../controllers/music_player_controller.dart';
 import '../widgets/up_next_banner_widget.dart';
+import 'video_player_page.dart';
 import '../../../favorites/presentation/controllers/favorites_controller.dart';
 
 final artworkColorSchemeProvider =
@@ -23,8 +24,10 @@ final artworkColorSchemeProvider =
   }
 });
 
-class FullMusicPlayerPage extends ConsumerWidget {
+class FullMusicPlayerPage extends ConsumerStatefulWidget {
   const FullMusicPlayerPage({super.key});
+
+  static bool isActive = false;
 
   static Future<void> open(BuildContext context) {
     return Navigator.of(context, rootNavigator: true).push(
@@ -47,6 +50,45 @@ class FullMusicPlayerPage extends ConsumerWidget {
     );
   }
 
+  static Future<void> replace(BuildContext context) {
+    return Navigator.of(context, rootNavigator: true).pushReplacement(
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const FullMusicPlayerPage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 1),
+              end: Offset.zero,
+            ).animate(CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+            )),
+            child: child,
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  ConsumerState<FullMusicPlayerPage> createState() =>
+      _FullMusicPlayerPageState();
+}
+
+class _FullMusicPlayerPageState extends ConsumerState<FullMusicPlayerPage> {
+  @override
+  void initState() {
+    super.initState();
+    FullMusicPlayerPage.isActive = true;
+  }
+
+  @override
+  void dispose() {
+    FullMusicPlayerPage.isActive = false;
+    super.dispose();
+  }
+
   String _formatDuration(Duration duration) {
     final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
@@ -59,7 +101,35 @@ class FullMusicPlayerPage extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    ref.listen<MusicPlayerState>(musicPlayerControllerProvider, (
+      previous,
+      next,
+    ) {
+      final newItem = next.activeItem;
+      if (newItem == null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          Navigator.of(context).pop();
+        });
+        return;
+      }
+      if (newItem.isVideo &&
+          previous?.activeItem?.id != newItem.id) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          Navigator.of(context, rootNavigator: true).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => VideoPlayerPage(
+                item: newItem,
+                playlist: next.queue,
+              ),
+            ),
+          );
+        });
+      }
+    });
+
     final playerState = ref.watch(musicPlayerControllerProvider);
     final controller = ref.read(musicPlayerControllerProvider.notifier);
     final activeItem = playerState.activeItem;
