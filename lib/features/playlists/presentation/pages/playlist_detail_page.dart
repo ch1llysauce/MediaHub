@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +7,7 @@ import '../../../player/presentation/controllers/music_player_controller.dart';
 import '../../../player/presentation/pages/full_music_player_page.dart';
 import '../controllers/playlist_detail_controller.dart';
 import '../controllers/playlists_controller.dart';
+import '../../../../shared/media_thumbnail.dart';
 
 class PlaylistDetailPage extends ConsumerWidget {
   final String playlistId;
@@ -349,26 +349,11 @@ class PlaylistDetailPage extends ConsumerWidget {
                     final item = items[index];
                     return ListTile(
                       key: ValueKey(item.id),
-                      leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: item.artworkPath != null && File(item.artworkPath!).existsSync()
-                            ? Image.file(
-                                File(item.artworkPath!),
-                                width: 48,
-                                height: 48,
-                                fit: BoxFit.cover,
-                              )
-                            : Container(
-                                width: 48,
-                                height: 48,
-                                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                                child: Icon(
-                                  item.mediaType == 'video'
-                                      ? Icons.movie_rounded
-                                      : Icons.music_note_rounded,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                              ),
+                      leading: MediaThumbnail(
+                        artworkPath: item.artworkPath,
+                        mediaType: item.mediaType,
+                        size: 48,
+                        borderRadius: 6,
                       ),
                       title: Text(
                         item.title,

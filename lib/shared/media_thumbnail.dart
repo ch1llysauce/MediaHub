@@ -20,6 +20,9 @@ class MediaThumbnail extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final fallbackIcon = mediaType == 'video' ? Icons.movie_rounded : Icons.music_note_rounded;
 
+    final devicePixelRatio = MediaQuery.of(context).devicePixelRatio;
+    final cacheSize = (size * devicePixelRatio).round();
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(borderRadius),
       child: Container(
@@ -34,6 +37,8 @@ class MediaThumbnail extends StatelessWidget {
                 File(artworkPath!),
                 width: size,
                 height: size,
+                cacheWidth: cacheSize,
+                cacheHeight: cacheSize,
                 fit: BoxFit.cover,
                 errorBuilder: (_, __, ___) => Icon(
                   fallbackIcon,

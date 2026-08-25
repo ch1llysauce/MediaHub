@@ -102,8 +102,10 @@ class HomePage extends ConsumerWidget {
               final isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
 
               return SizedBox(
-                height: isLandscape ? 130 : 150,
+                height: isLandscape ? 140 : 160,
                 child: ListView.separated(
+                  clipBehavior: Clip.none,
+                  padding: const EdgeInsets.only(bottom: 8, top: 4),
                   scrollDirection: Axis.horizontal,
                   itemCount: items.length > 8 ? 8 : items.length,
                   separatorBuilder: (_, index) => const SizedBox(width: 12),

@@ -140,17 +140,27 @@ class _FullMusicPlayerPageState extends ConsumerState<FullMusicPlayerPage> {
 
     final theme = Theme.of(context);
     final defaultColorScheme = theme.colorScheme;
+    final fallbackScheme = ColorScheme.fromSeed(
+      seedColor: defaultColorScheme.primary,
+      brightness: Brightness.dark,
+    );
 
     final dynamicColorScheme =
         ref.watch(artworkColorSchemeProvider(activeItem.artworkPath)).value ??
-            defaultColorScheme;
+            fallbackScheme;
+
+    final playerTheme = ThemeData(
+      colorScheme: dynamicColorScheme,
+      brightness: Brightness.dark,
+      useMaterial3: true,
+    );
 
     final primaryColor = dynamicColorScheme.primary;
-    final surfaceColor = defaultColorScheme.surface;
+    final surfaceColor = dynamicColorScheme.surface;
 
     // Color-infused deep bottom tint so the entire background has dynamic color
     final bottomColor = Color.alphaBlend(
-      primaryColor.withValues(alpha: 0.35),
+      primaryColor.withValues(alpha: 0.20),
       surfaceColor,
     );
 
@@ -175,21 +185,30 @@ class _FullMusicPlayerPageState extends ConsumerState<FullMusicPlayerPage> {
           stops: const [0.0, 0.50, 1.0],
         ),
       ),
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: AppBar(
-          leading: IconButton(
-            icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 32),
-            onPressed: () => Navigator.of(context).pop(),
-          ),
-          title: const Text(
-            'Now Playing',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          centerTitle: true,
+      child: Theme(
+        data: playerTheme,
+        child: Scaffold(
           backgroundColor: Colors.transparent,
-          elevation: 0,
-        ),
+          appBar: AppBar(
+            leading: IconButton(
+              icon: Icon(
+                Icons.keyboard_arrow_down_rounded,
+                size: 32,
+                color: dynamicColorScheme.onSurface,
+              ),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            title: Text(
+              'Now Playing',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: dynamicColorScheme.onSurface,
+              ),
+            ),
+            centerTitle: true,
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+          ),
         body: SafeArea(
           child: OrientationBuilder(
             builder: (context, orientation) {
@@ -197,7 +216,7 @@ class _FullMusicPlayerPageState extends ConsumerState<FullMusicPlayerPage> {
                 return _buildLandscapeLayout(
                   context,
                   ref,
-                  theme,
+                  playerTheme,
                   dynamicColorScheme,
                   activeItem,
                   playerState,
@@ -209,7 +228,7 @@ class _FullMusicPlayerPageState extends ConsumerState<FullMusicPlayerPage> {
               return _buildPortraitLayout(
                 context,
                 ref,
-                theme,
+                playerTheme,
                 dynamicColorScheme,
                 activeItem,
                 playerState,
@@ -221,8 +240,9 @@ class _FullMusicPlayerPageState extends ConsumerState<FullMusicPlayerPage> {
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   // ==================== PORTRAIT LAYOUT ====================
   Widget _buildPortraitLayout(
@@ -417,6 +437,7 @@ class _FullMusicPlayerPageState extends ConsumerState<FullMusicPlayerPage> {
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.bold,
+                  color: colorScheme.onSurface,
                 ),
               ),
               const SizedBox(height: 4),
@@ -536,7 +557,7 @@ class _FullMusicPlayerPageState extends ConsumerState<FullMusicPlayerPage> {
         ),
         IconButton(
           iconSize: 40,
-          icon: const Icon(Icons.skip_previous_rounded),
+          icon: Icon(Icons.skip_previous_rounded, color: colorScheme.onSurface),
           onPressed: hasPrevious ? () => controller.skipToPrevious() : null,
         ),
         Container(
@@ -559,7 +580,7 @@ class _FullMusicPlayerPageState extends ConsumerState<FullMusicPlayerPage> {
         ),
         IconButton(
           iconSize: 40,
-          icon: const Icon(Icons.skip_next_rounded),
+          icon: Icon(Icons.skip_next_rounded, color: colorScheme.onSurface),
           onPressed: hasNext ? () => controller.skipToNext() : null,
         ),
         IconButton(

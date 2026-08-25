@@ -242,6 +242,8 @@ class PlaylistsPage extends ConsumerWidget {
                               ? Image.file(
                                   File(playlist.artworkPath!),
                                   fit: BoxFit.cover,
+                                  cacheWidth: (200 * MediaQuery.of(context).devicePixelRatio).round(),
+                                  cacheHeight: (200 * MediaQuery.of(context).devicePixelRatio).round(),
                                 )
                               : Center(
                                   child: Icon(

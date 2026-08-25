@@ -53,8 +53,11 @@ class MediaItemTile extends ConsumerWidget {
     final colorScheme = theme.colorScheme;
     final isAudio = item.mediaType == 'audio';
 
-    final favoriteIdsAsync = ref.watch(favoriteMediaIdsStreamProvider);
-    final isFavorite = favoriteIdsAsync.value?.contains(item.id) ?? false;
+    final isFavorite = ref.watch(
+      favoriteMediaIdsStreamProvider.select(
+        (asyncVal) => asyncVal.value?.contains(item.id) ?? false,
+      ),
+    );
 
     return ListTile(
       onTap: onTap,
