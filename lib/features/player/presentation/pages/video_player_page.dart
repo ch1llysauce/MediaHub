@@ -41,7 +41,6 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
   late final VideoController _videoController;
 
   bool _isDraggingSlider = false;
-  bool _canPop = false;
   Duration _previewPosition = Duration.zero;
   Uint8List? _previewThumbnailBytes;
   Timer? _previewDebounceTimer;
@@ -57,8 +56,6 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
   static const _pipControlsChannel = MethodChannel(
     'com.example.mediahub/pip_controls',
   );
-  bool _pipEligible = false;
-  bool _transitionedToBackgroundAudio = false;
 
   late MediaItemEntity _currentItem;
   late List<MediaItemEntity> _playlist;
@@ -365,7 +362,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
     int savedPos = runtimePos > dbSavedPos ? runtimePos : dbSavedPos;
 
     // If the saved position is near the end of the video (within 5 seconds),
-    // the video was previously completed — start from the beginning instead.
+    // the video was previously completed ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â start from the beginning instead.
     // Use metadata duration first, but also check actual player duration as
     // fallback since metadata can be inaccurate or missing.
     final mediaDuration = _currentItem.duration ?? 0;
@@ -705,64 +702,36 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
     });
   }
 
-  Future<void> _onBackPressed() async {
-    // If the video completed naturally, save position 0 so it restarts
-    // next time instead of getting stuck at the last second.
-    await _disarmPipOnLeave();
-    if (_isCompleted) {
-      await ref
-          .read(historyControllerProvider)
-          .recordPlayback(_currentItem.id, playbackPosition: 0);
-      ref
-          .read(musicPlayerControllerProvider.notifier)
-          .updatePosition(Duration.zero);
-    } else {
-      final posToSave = _lastKnownValidPosition > 1
-          ? _lastKnownValidPosition
-          : (_position.inSeconds > 0
-                ? _position.inSeconds
-                : _player.state.position.inSeconds);
 
-      if (posToSave > 1) {
-        await ref
-            .read(historyControllerProvider)
-            .recordPlayback(_currentItem.id, playbackPosition: posToSave);
-        ref
-            .read(musicPlayerControllerProvider.notifier)
-            .updatePosition(Duration(seconds: posToSave));
-      }
-    }
 
-    final activeItem = ref.read(musicPlayerControllerProvider).activeItem;
-    if (activeItem?.isVideo == true && _isPlaying && !_isCompleted) {
-      _transitionedToBackgroundAudio = true;
-      try {
-        await _player.pause();
-        await _player.stop();
-      } catch (_) {}
-      await ref
-          .read(musicPlayerControllerProvider.notifier)
-          .playVideoAsAudio(_currentItem, position: _position);
-    } else {
-      if (activeItem?.isVideo == true) {
-        ref.read(musicPlayerControllerProvider.notifier).pauseAudio();
-      }
-      try {
-        await _player.pause();
-        await _player.stop();
-      } catch (_) {}
-    }
-
-    if (mounted) {
-      setState(() {
-        _canPop = true;
-      });
-      Navigator.of(context).pop();
-    }
-  }
-
-  @override
+    @override
   void dispose() {
+    // 1. Capture position from Dart state BEFORE the player is destroyed.
+    final int posToSave = _isCompleted
+        ? 0
+        : (_lastKnownValidPosition > 1
+            ? _lastKnownValidPosition
+            : (_position.inSeconds > 1 ? _position.inSeconds : 0));
+
+    // 2. Silence just_audio immediately (fire-and-forget is fine in dispose).
+    try { ref.read(musicPlayerControllerProvider.notifier).pauseAudio(); } catch (_) {}
+
+    // 3. Dispose the media_kit player.
+    //    NEVER call _player.pause() or _player.stop() before dispose() ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â
+    //    doing so triggers a native libmpv SIGABRT crash (seen in logs).
+    try {
+      _player.dispose();
+    } catch (_) {}
+
+    // 4. Restore system UI / orientation overrides.
+    try {
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    } catch (_) {}
+
     _previewDebounceTimer?.cancel();
     _disarmPipOnLeave();
     VideoPlayerPage.isActive = false;
@@ -772,22 +741,16 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
     _seekOverlayFadeTimer?.cancel();
     _pipStatusSub?.cancel();
 
-    // If the video completed naturally, ensure position stays at 0
-    if (_isCompleted) {
-      ref
-          .read(historyControllerProvider)
-          .recordPlayback(_currentItem.id, playbackPosition: 0);
-      ref
-          .read(musicPlayerControllerProvider.notifier)
-          .updatePosition(Duration.zero);
-    } else {
-      final posToSave = _lastKnownValidPosition > 1
-          ? _lastKnownValidPosition
-          : (_position.inSeconds > 0
-                ? _position.inSeconds
-                : _player.state.position.inSeconds);
-
-      if (posToSave > 1) {
+    // 5. Save playback history.
+    try {
+      if (_isCompleted) {
+        ref
+            .read(historyControllerProvider)
+            .recordPlayback(_currentItem.id, playbackPosition: 0);
+        ref
+            .read(musicPlayerControllerProvider.notifier)
+            .updatePosition(Duration.zero);
+      } else if (posToSave > 1) {
         ref
             .read(historyControllerProvider)
             .recordPlayback(_currentItem.id, playbackPosition: posToSave);
@@ -795,22 +758,10 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
             .read(musicPlayerControllerProvider.notifier)
             .updatePosition(Duration(seconds: posToSave));
       }
+    } catch (e) {
+      debugPrint('[VideoPlayerPage] Error saving history in dispose: $e');
     }
 
-    if (!_transitionedToBackgroundAudio) {
-      final activeItemDispose = ref.read(musicPlayerControllerProvider).activeItem;
-      if (activeItemDispose?.isVideo == true) {
-        ref.read(musicPlayerControllerProvider.notifier).pauseAudio();
-      }
-    }
-    _player.pause();
-    _player.stop();
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.portraitUp,
-      DeviceOrientation.portraitDown,
-    ]);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    _player.dispose();
     super.dispose();
   }
 
@@ -865,9 +816,6 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
             await _player.stop();
           } catch (_) {}
           if (!mounted) return;
-          setState(() {
-            _canPop = true;
-          });
           if (context.mounted && !FullMusicPlayerPage.isActive) {
             FullMusicPlayerPage.replace(context);
           }
@@ -900,15 +848,8 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
       durationMs > 0 ? durationMs : 1.0,
     );
     final primaryColor = Theme.of(context).colorScheme.primary;
-
-    return PopScope(
-      canPop: _canPop,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
-        await _onBackPressed();
-      },
-      child: Scaffold(
-        backgroundColor: Colors.black,
+    return Scaffold(
+      backgroundColor: Colors.black,
         body: Listener(
           onPointerDown: (event) {
             _pointerCount++;
@@ -936,7 +877,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
               _baseFocalPoint = details.focalPoint;
             },
             onScaleUpdate: (details) {
-              // Dalawa o higit pang daliri, o may laman na ang zoom — pinch/pan mode
+              // Dalawa o higit pang daliri, o may laman na ang zoom ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â pinch/pan mode
               if (_pointerCount >= 2 || _scale > 1.0) {
                 setState(() {
                   _scale = (_baseScale * details.scale).clamp(1.0, 4.0);
@@ -1107,7 +1048,11 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                                         Icons.arrow_back_rounded,
                                         color: Colors.white,
                                       ),
-                                      onPressed: _onBackPressed,
+                                      onPressed: () {
+                                        if (mounted) {
+                                          Navigator.of(context).pop();
+                                        }
+                                      },
                                     ),
                                     Expanded(
                                       child: Text(
@@ -1304,7 +1249,7 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  // Floating Preview Bubble — lumalabas lang habang naka-drag
+                                  // Floating Preview Bubble ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â lumalabas lang habang naka-drag
                                   if (_isDraggingSlider)
                                     Padding(
                                       padding: const EdgeInsets.only(
@@ -1763,7 +1708,6 @@ class _VideoPlayerPageState extends ConsumerState<VideoPlayerPage>
             ),
           ),
         ),
-      ),
     );
   }
 }

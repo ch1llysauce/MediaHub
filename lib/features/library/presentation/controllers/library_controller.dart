@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -81,10 +82,30 @@ class LibraryController extends StateNotifier<LibraryState> {
   }
 
 
+
   Future<void> scanIfEmpty() async {
     final media = await _repository.getAllMedia();
     if (media.isEmpty) {
       await scanDeviceMedia();
+    } else {
+      // Library already has data. Still kick off background artwork/duration
+      // backfill for any items that are missing or previously failed.
+      unawaited(_repository.retryMissingArtworks());
+    }
+  }
+
+  bool _isRetryingArtworks = false;
+
+  /// Lightweight check — only triggers if not already running, so safe to call
+  /// on every app resume without spamming extractions.
+  Future<void> retryArtworksIfNeeded() async {
+    if (_isRetryingArtworks || state.isScanning) return;
+    _isRetryingArtworks = true;
+    try {
+      unawaited(_repository.retryMissingArtworks());
+    } finally {
+      // Allow retry again after a brief cooldown
+      Future.delayed(const Duration(seconds: 30), () => _isRetryingArtworks = false);
     }
   }
 

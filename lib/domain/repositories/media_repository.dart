@@ -16,4 +16,6 @@ abstract class MediaRepository {
   Future<void> removeScanDirectory(String id);
   Future<void> updateMediaDuration(String id, int durationInSeconds);
   Future<void> deleteMediaFile(String id, String filePath);
+  /// Re-run artwork/duration extraction for items that are missing or previously failed.
+  Future<void> retryMissingArtworks();
 }

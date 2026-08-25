@@ -47,13 +47,30 @@ class LibraryPage extends ConsumerStatefulWidget {
   ConsumerState<LibraryPage> createState() => _LibraryPageState();
 }
 
-class _LibraryPageState extends ConsumerState<LibraryPage> {
+class _LibraryPageState extends ConsumerState<LibraryPage>
+    with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(libraryControllerProvider.notifier).scanIfEmpty();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // When the app comes back to foreground, silently retry any missing artworks.
+    // This handles cases where Android cleared the cache while the app was suspended.
+    if (state == AppLifecycleState.resumed && mounted) {
+      ref.read(libraryControllerProvider.notifier).retryArtworksIfNeeded();
+    }
   }
 
   @override

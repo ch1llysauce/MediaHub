@@ -417,11 +417,19 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
   Future<void> closePlayer() async {
     final activeId = state.activeItem?.id;
     if (activeId != null) {
-      await _historyRepository?.recordPlayback(activeId, playbackPosition: 0);
+      try {
+        await _historyRepository?.recordPlayback(activeId, playbackPosition: 0);
+      } catch (_) {}
     }
-    await _playlistSub?.cancel();
+    try {
+      await _playlistSub?.cancel();
+    } catch (_) {}
     _playlistSub = null;
-    await _audioService.pause();
+    try {
+      await _audioService.pause();
+      await _audioHandler?.stopService();
+    } catch (_) {}
+    // Always reset — must be last so it executes even if any step above throws.
     state = const MusicPlayerState();
   }
 

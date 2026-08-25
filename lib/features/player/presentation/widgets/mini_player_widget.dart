@@ -196,10 +196,17 @@ class MiniPlayerWidget extends ConsumerWidget {
                             controller.pauseAudio();
                           } else {
                             if (activeItem.mediaType == 'video') {
-                              controller.playVideoAsAudio(
-                                activeItem,
-                                position: playerState.position,
-                              );
+                              // Navigate to video player instead of playing audio-only
+                              if (!VideoPlayerPage.isActive) {
+                                Navigator.of(context, rootNavigator: true).push(
+                                  MaterialPageRoute(
+                                    builder: (context) => VideoPlayerPage(
+                                      item: activeItem,
+                                      playlist: playerState.queue,
+                                    ),
+                                  ),
+                                );
+                              }
                             } else {
                               controller.togglePlayPause();
                             }

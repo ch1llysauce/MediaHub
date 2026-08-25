@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:path/path.dart' as p;
 
 import 'package:audio_metadata_reader/audio_metadata_reader.dart';
@@ -174,15 +175,28 @@ class MediaRepositoryImpl implements MediaRepository {
           continue;
         }
 
-        // 1. Extract Duration (Pure Dart, incredibly fast, no hardware decoding)
+        // 1. Extract Duration
         if (isDurationMissing) {
           try {
-            final metadata = readMetadata(file);
-            if (metadata.duration != null && metadata.duration!.inSeconds > 0) {
-              await _mediaDao.updateMediaDuration(media.id, metadata.duration!.inSeconds);
+            if (media.mediaType == 'audio') {
+              // Pure Dart, incredibly fast for audio
+              final metadata = readMetadata(file);
+              if (metadata.duration != null && metadata.duration!.inSeconds > 0) {
+                await _mediaDao.updateMediaDuration(media.id, metadata.duration!.inSeconds);
+              }
+            } else if (media.mediaType == 'video') {
+              // Use media_kit to extract video duration silently
+              final durationSeconds = await _getVideoDuration(file.path);
+              if (durationSeconds != null && durationSeconds > 0) {
+                await _mediaDao.updateMediaDuration(media.id, durationSeconds);
+              } else {
+                // Mark as -1 to indicate it failed, so we don't retry forever
+                await _mediaDao.updateMediaDuration(media.id, -1);
+              }
             }
           } catch (_) {
-            // Ignore format errors (e.g., MKV)
+            // Ignore format errors, but mark as -1 so we don't retry next time
+            await _mediaDao.updateMediaDuration(media.id, -1);
           }
         }
 
@@ -259,5 +273,111 @@ class MediaRepositoryImpl implements MediaRepository {
       }
     } catch (_) {}
     await _mediaDao.deleteMediaRecord(id);
+  }
+
+
+  @override
+  Future<void> retryMissingArtworks() async {
+    // Reset any previously-failed artworks so the extraction loop will try them again.
+    await _mediaDao.resetFailedArtworks();
+    // Run the full metadata + artwork backfill pass in the background.
+    unawaited(_populateMetadataAndArtworksSequentially());
+  }
+
+  Future<int?> _getVideoDuration(String path) async {
+    // 1. Ultra-fast pure Dart metadata extraction for MP4/M4V/MOV files
+    final fastDuration = await _getFastMp4Duration(path);
+    if (fastDuration != null && fastDuration > 0) {
+      return fastDuration;
+    }
+
+    // 2. Fallback to media_kit for MKV, AVI, WebM, etc. (Slow)
+    Player? player;
+    try {
+      player = Player(configuration: const PlayerConfiguration());
+      final videoUri = Uri.file(path).toString();
+      await player.open(Media(videoUri), play: false);
+
+      final duration = await player.stream.duration
+          .firstWhere((d) => d.inSeconds > 0)
+          .timeout(const Duration(seconds: 3));
+
+      return duration.inSeconds;
+    } catch (_) {
+      return null;
+    } finally {
+      try {
+        await player?.dispose();
+      } catch (_) {}
+    }
+  }
+
+  Future<int?> _getFastMp4Duration(String path) async {
+    RandomAccessFile? raf;
+    try {
+      final file = File(path);
+      raf = await file.open(mode: FileMode.read);
+      final length = await file.length();
+      int offset = 0;
+
+      // Only scan first 50MB to avoid hanging on massive non-mp4 files
+      final maxScan = length > 50000000 ? 50000000 : length;
+
+      while (offset < maxScan) {
+        raf.setPositionSync(offset);
+        final header = raf.readSync(8);
+        if (header.length < 8) break;
+
+        final byteData = ByteData.view(header.buffer, header.offsetInBytes, header.lengthInBytes);
+        int size = byteData.getUint32(0);
+        final type = String.fromCharCodes(header.sublist(4, 8));
+
+        int headerSize = 8;
+        if (size == 1) {
+          final extSize = raf.readSync(8);
+          final extData = ByteData.view(extSize.buffer, extSize.offsetInBytes, extSize.lengthInBytes);
+          size = extData.getUint64(0);
+          headerSize = 16;
+        } else if (size == 0) {
+          break; // EOF
+        }
+
+        if (type == 'moov') {
+          offset += headerSize; // Step inside 'moov' box
+          continue;
+        } else if (type == 'mvhd') {
+          final version = raf.readByteSync();
+          raf.readSync(3); // skip flags
+
+          int timeScale = 0;
+          int duration = 0;
+
+          if (version == 0) {
+            final data = raf.readSync(16);
+            final bd = ByteData.view(data.buffer, data.offsetInBytes, data.lengthInBytes);
+            timeScale = bd.getUint32(8);
+            duration = bd.getUint32(12);
+          } else if (version == 1) {
+            final data = raf.readSync(28);
+            final bd = ByteData.view(data.buffer, data.offsetInBytes, data.lengthInBytes);
+            timeScale = bd.getUint32(16);
+            duration = bd.getUint64(20);
+          }
+
+          if (timeScale > 0) {
+            return duration ~/ timeScale;
+          }
+          break;
+        } else {
+          offset += size; // Skip unknown boxes
+        }
+      }
+    } catch (_) {
+    } finally {
+      try {
+        raf?.closeSync();
+      } catch (_) {}
+    }
+    return null;
   }
 }
