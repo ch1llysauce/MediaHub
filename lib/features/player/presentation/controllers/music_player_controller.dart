@@ -111,8 +111,8 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
 
   void _setupAudioHandler() {
     if (_audioHandler != null) {
-      _audioHandler.onSkipToNext = skipToNext;
-      _audioHandler.onSkipToPrevious = skipToPrevious;
+      _audioHandler.onSkipToNext = () => skipToNext(skipVideos: true);
+      _audioHandler.onSkipToPrevious = () => skipToPrevious(skipVideos: true);
       _audioHandler.onStopPlayer = closePlayer;
     }
   }
@@ -387,7 +387,7 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
     } else {
       try {
         await _audioService.stop();
-        await _audioHandler?.stop();
+        await _audioHandler?.stopService();
       } catch (_) {}
     }
   }
@@ -395,7 +395,7 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
   Future<void> pauseAudio() async {
     try {
       await _audioService.stop();
-      await _audioHandler?.stop();
+      await _audioHandler?.stopService();
     } catch (_) {}
     state = state.copyWith(isPlaying: false);
   }
@@ -443,58 +443,66 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
     await seek(Duration(seconds: targetSec));
   }
 
-  Future<void> skipToNext({bool isAutoNext = false}) async {
+  Future<void> skipToNext({bool isAutoNext = false, bool skipVideos = false}) async {
     _isUpNextDismissed = false;
     if (state.queue.isEmpty) return;
 
-    int nextIndex;
+    int nextIndex = state.currentIndex;
     List<int> currentShuffled = state.shuffledIndices;
+    bool found = false;
 
-    if (state.isShuffle && state.queue.length > 1) {
-      if (currentShuffled.length != state.queue.length) {
-        currentShuffled = _generateShuffledIndices(state.queue.length, state.currentIndex);
-        state = state.copyWith(shuffledIndices: currentShuffled);
-      }
-
-      final currentPos = currentShuffled.indexOf(state.currentIndex);
-      var nextPos = (currentPos >= 0) ? currentPos + 1 : 0;
-
-      if (nextPos >= currentShuffled.length) {
-        if (state.repeatMode == PlayerRepeatMode.all) {
-          currentShuffled = _generateShuffledIndices(state.queue.length, 0);
+    for (int i = 0; i < state.queue.length; i++) {
+      if (state.isShuffle && state.queue.length > 1) {
+        if (currentShuffled.length != state.queue.length) {
+          currentShuffled = _generateShuffledIndices(state.queue.length, state.currentIndex);
           state = state.copyWith(shuffledIndices: currentShuffled);
-          nextPos = 0;
-        } else {
-          await _audioService.pause();
-          await _audioService.seek(Duration.zero);
-          state = state.copyWith(
-            isPlaying: false,
-            position: Duration.zero,
-            showUpNextPreview: false,
-            clearNextUpItem: true,
-          );
-          return;
+        }
+
+        final currentPos = currentShuffled.indexOf(nextIndex);
+        var nextPos = (currentPos >= 0) ? currentPos + 1 : 0;
+
+        if (nextPos >= currentShuffled.length) {
+          if (state.repeatMode == PlayerRepeatMode.all) {
+            currentShuffled = _generateShuffledIndices(state.queue.length, 0);
+            state = state.copyWith(shuffledIndices: currentShuffled);
+            nextPos = 0;
+          } else {
+            nextIndex = -1;
+            break;
+          }
+        }
+
+        nextIndex = currentShuffled[nextPos];
+      } else {
+        nextIndex = nextIndex + 1;
+        if (nextIndex >= state.queue.length) {
+          if (state.repeatMode == PlayerRepeatMode.all) {
+            nextIndex = 0;
+          } else {
+            nextIndex = -1;
+            break;
+          }
         }
       }
 
-      nextIndex = currentShuffled[nextPos];
-    } else {
-      nextIndex = state.currentIndex + 1;
-      if (nextIndex >= state.queue.length) {
-        if (state.repeatMode == PlayerRepeatMode.all) {
-          nextIndex = 0;
-        } else {
-          await _audioService.pause();
-          await _audioService.seek(Duration.zero);
-          state = state.copyWith(
-            isPlaying: false,
-            position: Duration.zero,
-            showUpNextPreview: false,
-            clearNextUpItem: true,
-          );
-          return;
-        }
+      if (skipVideos && state.queue[nextIndex].mediaType == 'video') {
+        continue;
+      } else {
+        found = true;
+        break;
       }
+    }
+
+    if (!found || nextIndex == -1) {
+      await _audioService.pause();
+      await _audioService.seek(Duration.zero);
+      state = state.copyWith(
+        isPlaying: false,
+        position: Duration.zero,
+        showUpNextPreview: false,
+        clearNextUpItem: true,
+      );
+      return;
     }
 
     final nextItem = state.queue[nextIndex];
@@ -505,7 +513,7 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
     );
   }
 
-  Future<void> skipToPrevious() async {
+  Future<void> skipToPrevious({bool skipVideos = false}) async {
     if (state.queue.isEmpty) return;
 
     if (state.position.inSeconds > 3) {
@@ -513,22 +521,36 @@ StreamSubscription<List<MediaItemEntity>>? _playlistSub;
       return;
     }
 
-    int prevIndex;
-    if (state.isShuffle && state.queue.length > 1) {
-      List<int> currentShuffled = state.shuffledIndices;
-      if (currentShuffled.length != state.queue.length) {
-        currentShuffled = _generateShuffledIndices(state.queue.length, state.currentIndex);
+    int prevIndex = state.currentIndex;
+    List<int> currentShuffled = state.shuffledIndices;
+    bool found = false;
+
+    for (int i = 0; i < state.queue.length; i++) {
+      if (state.isShuffle && state.queue.length > 1) {
+        if (currentShuffled.length != state.queue.length) {
+          currentShuffled = _generateShuffledIndices(state.queue.length, state.currentIndex);
+          state = state.copyWith(shuffledIndices: currentShuffled);
+        }
+
+        final currentPos = currentShuffled.indexOf(prevIndex);
+        final prevPos = (currentPos > 0) ? currentPos - 1 : currentShuffled.length - 1;
+        prevIndex = currentShuffled[prevPos];
+      } else {
+        prevIndex = prevIndex - 1;
+        if (prevIndex < 0) {
+          prevIndex = state.queue.length - 1;
+        }
       }
 
-      final currentPos = currentShuffled.indexOf(state.currentIndex);
-      final prevPos = (currentPos > 0) ? currentPos - 1 : currentShuffled.length - 1;
-      prevIndex = currentShuffled[prevPos];
-    } else {
-      prevIndex = state.currentIndex - 1;
-      if (prevIndex < 0) {
-        prevIndex = state.queue.length - 1;
+      if (skipVideos && state.queue[prevIndex].mediaType == 'video') {
+        continue;
+      } else {
+        found = true;
+        break;
       }
     }
+
+    if (!found) return;
 
     final prevItem = state.queue[prevIndex];
     await playItem(

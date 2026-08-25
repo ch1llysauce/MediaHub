@@ -136,6 +136,13 @@ class MediaHubAudioHandler extends BaseAudioHandler
     await super.stop();
   }
 
+  /// Programmatically stops the audio service without triggering [onStopPlayer].
+  /// This prevents wiping the playback state when switching to a video file.
+  Future<void> stopService() async {
+    await audioService.stop();
+    await super.stop();
+  }
+
   @override
   Future<void> setSpeed(double speed) async {
     await audioService.player.setSpeed(speed);
