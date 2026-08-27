@@ -229,6 +229,7 @@ Supports sorting media by Title, Artist, Album, Date added, Recently played, and
 - **FR-58 — Retry Download**: Retry failed tasks.
 - **FR-59 — Download Destination**: Save completed media to configured storage path.
 - **FR-60 — Error Handling**: Gracefully handle Network, Invalid URL, Storage, and Permission errors.
+- **FR-60.1 — Known Limitations**: The app relies on client-side proxy scraping (Cobalt/Invidious/YoutubeExplode). Due to third-party anti-bot measures, YouTube downloads are subject to temporary rate-limits, TLS fingerprint blocking, and unresolvable streams. The application handles these gracefully via timeouts and user-facing error prompts.
 
 ---
 

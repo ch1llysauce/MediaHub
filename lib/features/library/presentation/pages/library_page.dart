@@ -451,28 +451,16 @@ class _FastScrollbarState extends State<FastScrollbar> {
   @override
   void initState() {
     super.initState();
-    widget.controller.addListener(_onScroll);
   }
 
   @override
   void didUpdateWidget(FastScrollbar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller != widget.controller) {
-      oldWidget.controller.removeListener(_onScroll);
-      widget.controller.addListener(_onScroll);
-    }
   }
 
   @override
   void dispose() {
-    widget.controller.removeListener(_onScroll);
     super.dispose();
-  }
-
-  void _onScroll() {
-    if (!_isDragging && mounted) {
-      setState(() {});
-    }
   }
 
   void _onDragUpdate(double localY, double trackHeight) {
@@ -550,15 +538,6 @@ class _FastScrollbarState extends State<FastScrollbar> {
       builder: (context, constraints) {
         final trackHeight = constraints.maxHeight;
 
-        double handleY = 0.0;
-        const handleHeight = 48.0;
-        if (widget.controller.hasClients &&
-            widget.controller.position.maxScrollExtent > 0) {
-          final maxScroll = widget.controller.position.maxScrollExtent;
-          final currentScroll = widget.controller.offset.clamp(0.0, maxScroll);
-          handleY = (currentScroll / maxScroll) * (trackHeight - handleHeight);
-        }
-
         // Keep bubble bounded inside track height
         final bubbleTop = (_dragY - 24.0).clamp(12.0, trackHeight - 64.0);
 
@@ -603,20 +582,34 @@ class _FastScrollbarState extends State<FastScrollbar> {
                       ),
                     ),
                     // Elegant Thin Scrollbar Handle
-                    Positioned(
-                      top: handleY,
-                      right: 8,
-                      width: 4, // Thinner handle
-                      height: handleHeight,
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 100),
-                        decoration: BoxDecoration(
-                          color: _isDragging
-                              ? colorScheme.primary
-                              : colorScheme.onSurface.withOpacity(0.25),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
+                    AnimatedBuilder(
+                      animation: widget.controller,
+                      builder: (context, child) {
+                        double handleY = 0.0;
+                        const handleHeight = 48.0;
+                        if (widget.controller.hasClients &&
+                            widget.controller.position.maxScrollExtent > 0) {
+                          final maxScroll = widget.controller.position.maxScrollExtent;
+                          final currentScroll = widget.controller.offset.clamp(0.0, maxScroll);
+                          handleY = (currentScroll / maxScroll) * (trackHeight - handleHeight);
+                        }
+
+                        return Positioned(
+                          top: handleY,
+                          right: 8,
+                          width: 4, // Thinner handle
+                          height: handleHeight,
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 100),
+                            decoration: BoxDecoration(
+                              color: _isDragging
+                                  ? colorScheme.primary
+                                  : colorScheme.onSurface.withOpacity(0.25),
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),

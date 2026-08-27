@@ -9,11 +9,13 @@ class MediaQualityOption {
   final String label; // e.g. "1080p (HD)", "720p (HD)", "480p (SD)", "360p" or "320 kbps (HQ)", "192 kbps"
   final String streamUrl;
   final String? sizeLabel;
+  final String? fileExtension;
 
   const MediaQualityOption({
     required this.label,
     required this.streamUrl,
     this.sizeLabel,
+    this.fileExtension,
   });
 }
 
@@ -102,48 +104,245 @@ class YoutubeSourceProvider implements MediaSourceProvider {
   Future<MediaSourceInfo> resolve(Uri url, {bool audioOnly = false}) async {
     final yt = YoutubeExplode();
     try {
-      final video = await yt.videos.get(url.toString());
-      final manifest = await yt.videos.streamsClient.getManifest(video.id);
+      final videoIdStr = VideoId.parseVideoId(url.toString()) ?? url.toString();
+      final videoId = VideoId(videoIdStr);
 
-      final thumbnailUrl = video.thumbnails.highResUrl.isNotEmpty
-          ? video.thumbnails.highResUrl
-          : video.thumbnails.mediumResUrl;
+      String title = 'YouTube Media';
+      String thumbnailUrl = 'https://i.ytimg.com/vi/${videoId.value}/hqdefault.jpg';
+
+      // 1. Fetch title & thumbnail via YouTube oEmbed API for fast, unthrottled resolution
+      final dio = Dio(BaseOptions(
+        connectTimeout: const Duration(seconds: 4),
+        receiveTimeout: const Duration(seconds: 4),
+      ));
+      try {
+        final oembedRes = await dio.get<Map<String, dynamic>>(
+          'https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId.value}&format=json',
+        );
+        if (oembedRes.data != null) {
+          if (oembedRes.data!['title'] != null && (oembedRes.data!['title'] as String).isNotEmpty) {
+            title = oembedRes.data!['title'] as String;
+          }
+          if (oembedRes.data!['thumbnail_url'] != null && (oembedRes.data!['thumbnail_url'] as String).isNotEmpty) {
+            thumbnailUrl = oembedRes.data!['thumbnail_url'] as String;
+          }
+        }
+      } catch (_) {}
+
+      Video? video;
+      try {
+        video = await yt.videos.get(videoId);
+        if (video.title.isNotEmpty) {
+          title = video.title;
+        }
+        if (video.thumbnails.highResUrl.isNotEmpty) {
+          thumbnailUrl = video.thumbnails.highResUrl;
+        }
+      } catch (_) {}
+
+      // 2. Try Cobalt API for primary stream resolution
+      final targetUrl = 'https://www.youtube.com/watch?v=${videoId.value}';
+      for (final cobaltHost in ['api.cobalt.tools', 'co.wuk.sh']) {
+        try {
+          final cobaltResponse = await dio.post<Map<String, dynamic>>(
+            'https://$cobaltHost/api/json',
+            data: {
+              'url': targetUrl,
+              if (audioOnly) 'isAudioOnly': true,
+              if (audioOnly) 'aFormat': 'mp4',
+              if (!audioOnly) 'videoQuality': 'max',
+            },
+            options: Options(
+              headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              },
+              connectTimeout: const Duration(seconds: 8),
+              receiveTimeout: const Duration(seconds: 12),
+            ),
+          );
+
+          if (cobaltResponse.statusCode == 200 && cobaltResponse.data != null) {
+            final data = cobaltResponse.data!;
+            String? streamUrl = data['url']?.toString();
+            if ((streamUrl == null || streamUrl.isEmpty) && data['picker'] is List && (data['picker'] as List).isNotEmpty) {
+              final firstItem = (data['picker'] as List).first;
+              if (firstItem is Map) {
+                streamUrl = firstItem['url']?.toString();
+              }
+            }
+            if (streamUrl != null && streamUrl.isNotEmpty) {
+              if (data['filename'] != null) {
+                String cobaltTitle = data['filename'].toString();
+                if (cobaltTitle.isNotEmpty && cobaltTitle != 'youtube') {
+                   title = cobaltTitle;
+                }
+              }
+
+              return MediaSourceInfo(
+                title: title,
+                streamUrl: streamUrl,
+                mediaType: audioOnly ? 'audio' : 'video',
+                fileExtension: audioOnly ? '.m4a' : '.mp4',
+                thumbnailUrl: thumbnailUrl,
+                availableQualities: [
+                  MediaQualityOption(
+                    label: audioOnly ? 'High Quality Audio (M4A)' : 'High Quality Video (MP4)',
+                    streamUrl: streamUrl,
+                    fileExtension: audioOnly ? '.m4a' : '.mp4',
+                  ),
+                ],
+              );
+            }
+          }
+        } catch (e) {
+          developer.log('Cobalt API ($cobaltHost) failed: $e', name: 'MediaHub.YoutubeProvider');
+        }
+      }
+
+      // 3. Try Invidious API Proxy Fallback
+      final invidiousInstances = [
+        'invidious.jing.rocks',
+        'invidious.namazso.eu',
+        'inv.tux.pizza',
+        'vid.puffyan.us',
+      ];
+      
+      for (final invInstance in invidiousInstances) {
+        try {
+          final invResponse = await dio.get<Map<String, dynamic>>(
+            'https://$invInstance/api/v1/videos/${videoId.value}',
+            options: Options(
+              headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              },
+              connectTimeout: const Duration(seconds: 5),
+              receiveTimeout: const Duration(seconds: 8),
+            ),
+          );
+
+          if (invResponse.statusCode == 200 && invResponse.data != null) {
+            final data = invResponse.data!;
+            final formats = data['adaptiveFormats'] as List?;
+            final formatStreams = data['formatStreams'] as List?;
+            
+            String? selectedUrl;
+            String? selectedExt;
+            
+            if (audioOnly && formats != null) {
+              // Try to find m4a audio
+              final audioStreams = formats.where((f) => 
+                f['type'] != null && f['type'].toString().contains('audio/mp4')
+              ).toList();
+              
+              if (audioStreams.isNotEmpty) {
+                audioStreams.sort((a, b) => (b['bitrate'] as int? ?? 0).compareTo(a['bitrate'] as int? ?? 0));
+                selectedUrl = audioStreams.first['url']?.toString();
+                selectedExt = '.m4a';
+              } else {
+                // Fallback to webm/opus audio
+                final altStreams = formats.where((f) => 
+                  f['type'] != null && f['type'].toString().contains('audio/')
+                ).toList();
+                if (altStreams.isNotEmpty) {
+                  altStreams.sort((a, b) => (b['bitrate'] as int? ?? 0).compareTo(a['bitrate'] as int? ?? 0));
+                  selectedUrl = altStreams.first['url']?.toString();
+                  selectedExt = '.webm';
+                }
+              }
+            } else if (!audioOnly && formatStreams != null && formatStreams.isNotEmpty) {
+              // Pick highest quality muxed video
+              final videoStreams = formatStreams.toList();
+              videoStreams.sort((a, b) => 
+                 (b['qualityLabel']?.toString() ?? '').compareTo(a['qualityLabel']?.toString() ?? '')
+              );
+              selectedUrl = videoStreams.first['url']?.toString();
+              selectedExt = '.mp4';
+            }
+
+            if (selectedUrl != null && selectedUrl.isNotEmpty) {
+              final invTitle = data['title']?.toString() ?? title;
+              return MediaSourceInfo(
+                title: invTitle,
+                streamUrl: selectedUrl,
+                mediaType: audioOnly ? 'audio' : 'video',
+                fileExtension: selectedExt ?? (audioOnly ? '.m4a' : '.mp4'),
+                thumbnailUrl: thumbnailUrl,
+                availableQualities: [
+                  MediaQualityOption(
+                    label: audioOnly ? 'Proxy Quality Audio' : 'Proxy Quality Video',
+                    streamUrl: selectedUrl,
+                    fileExtension: selectedExt ?? (audioOnly ? '.m4a' : '.mp4'),
+                  ),
+                ],
+              );
+            }
+          }
+        } catch (e) {
+          developer.log('Invidious API ($invInstance) failed: $e', name: 'MediaHub.YoutubeProvider');
+        }
+      }
+
+      StreamManifest? manifest;
+      for (int attempt = 1; attempt <= 3; attempt++) {
+        try {
+          manifest = await yt.videos.streamsClient.getManifest(videoId);
+          break;
+        } catch (e) {
+          if (attempt == 3) rethrow;
+          await Future.delayed(Duration(milliseconds: 400 * attempt));
+        }
+      }
+
+      if (manifest == null) {
+        throw Exception('Failed to resolve YouTube video details.');
+      }
 
       final qualities = <MediaQualityOption>[];
 
-      if (audioOnly && manifest.audioOnly.isNotEmpty) {
-        final sortedAudio = manifest.audioOnly.toList()
-          ..sort((a, b) => b.bitrate.compareTo(a.bitrate));
-        for (final s in sortedAudio) {
-          final kbits = (s.bitrate.bitsPerSecond / 1000).round();
-          final formatTag = s.container.name.toLowerCase() == 'mp4' ? 'MP3' : s.container.name.toUpperCase();
-          final label = '$kbits kbps ($formatTag)';
-          if (!qualities.any((q) => q.label == label)) {
-            qualities.add(MediaQualityOption(
-              label: label,
-              streamUrl: s.url.toString(),
-              sizeLabel: s.size.totalBytes > 0
-                  ? '${(s.size.totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB'
-                  : null,
-            ));
-          }
-        }
+      if (audioOnly) {
+        if (manifest.audioOnly.isNotEmpty) {
+          final sortedAudio = manifest.audioOnly.toList()
+            ..sort((a, b) => b.bitrate.compareTo(a.bitrate));
 
-        final mainStream = manifest.audioOnly.withHighestBitrate();
-        return MediaSourceInfo(
-          title: video.title,
-          streamUrl: mainStream.url.toString(),
-          mediaType: 'audio',
-          fileExtension: '.mp3',
-          thumbnailUrl: thumbnailUrl,
-          availableQualities: qualities.isNotEmpty
-              ? qualities
-              : [
-                  MediaQualityOption(label: '320 kbps (HQ MP3)', streamUrl: mainStream.url.toString()),
-                  MediaQualityOption(label: '192 kbps (Standard MP3)', streamUrl: mainStream.url.toString()),
-                  MediaQualityOption(label: '128 kbps (Compact MP3)', streamUrl: mainStream.url.toString()),
-                ],
-        );
+          for (final s in sortedAudio) {
+            final kbits = (s.bitrate.bitsPerSecond / 1000).round();
+            final format = s.container.name == 'mp4' ? 'M4A' : s.container.name.toUpperCase();
+            final label = '$kbits kbps ($format Audio)';
+            if (!qualities.any((q) => q.label == label)) {
+              qualities.add(MediaQualityOption(
+                label: label,
+                streamUrl: s.url.toString(),
+                sizeLabel: s.size.totalBytes > 0
+                    ? '${(s.size.totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB'
+                    : null,
+                fileExtension: s.container.name == 'mp4' ? '.m4a' : '.${s.container.name}',
+              ));
+            }
+          }
+
+          final m4aStreams = manifest.audioOnly.where((s) => s.container.name == 'mp4');
+          final mainStream = m4aStreams.isNotEmpty
+              ? m4aStreams.withHighestBitrate()
+              : manifest.audioOnly.withHighestBitrate();
+          return MediaSourceInfo(
+            title: title,
+            streamUrl: mainStream.url.toString(),
+            mediaType: 'audio',
+            fileExtension: mainStream.container.name == 'mp4' ? '.m4a' : '.${mainStream.container.name}',
+            thumbnailUrl: thumbnailUrl,
+            availableQualities: qualities.isNotEmpty
+                ? qualities
+                : [
+                    MediaQualityOption(
+                      label: 'High Quality Audio',
+                      streamUrl: mainStream.url.toString(),
+                    ),
+                  ],
+          );
+        }
       }
 
       final muxedStreams = manifest.muxed.toList();
@@ -159,6 +358,7 @@ class YoutubeSourceProvider implements MediaSourceProvider {
               sizeLabel: s.size.totalBytes > 0
                   ? '${(s.size.totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB'
                   : null,
+              fileExtension: '.${s.container.name}',
             ));
           }
         }
@@ -166,32 +366,46 @@ class YoutubeSourceProvider implements MediaSourceProvider {
         final mainStream = manifest.muxed.withHighestBitrate();
 
         return MediaSourceInfo(
-          title: video.title,
+          title: title,
           streamUrl: mainStream.url.toString(),
-          mediaType: 'video',
-          fileExtension: '.${mainStream.container.name}',
+          mediaType: audioOnly ? 'audio' : 'video',
+          fileExtension: audioOnly ? '.m4a' : '.${mainStream.container.name}',
           thumbnailUrl: thumbnailUrl,
           availableQualities: qualities.isNotEmpty
               ? qualities
               : [
-                  MediaQualityOption(label: '720p (HD)', streamUrl: mainStream.url.toString()),
-                  MediaQualityOption(label: '480p (SD)', streamUrl: mainStream.url.toString()),
-                  MediaQualityOption(label: '360p (SD)', streamUrl: mainStream.url.toString()),
+                  MediaQualityOption(
+                    label: audioOnly ? 'High Quality Audio' : '720p (HD)',
+                    streamUrl: mainStream.url.toString(),
+                  ),
+                  MediaQualityOption(
+                    label: audioOnly ? 'Standard Quality Audio' : '480p (SD)',
+                    streamUrl: mainStream.url.toString(),
+                  ),
                 ],
         );
       }
 
       if (manifest.audioOnly.isNotEmpty) {
-        final audioStream = manifest.audioOnly.withHighestBitrate();
+        final m4aStreams = manifest.audioOnly.where((s) => s.container.name == 'mp4');
+        final audioStream = m4aStreams.isNotEmpty
+            ? m4aStreams.withHighestBitrate()
+            : manifest.audioOnly.withHighestBitrate();
         return MediaSourceInfo(
-          title: video.title,
+          title: title,
           streamUrl: audioStream.url.toString(),
-          mediaType: 'audio',
-          fileExtension: '.m4a',
+          mediaType: audioOnly ? 'audio' : 'video',
+          fileExtension: audioOnly ? '.mp3' : '.mp4',
           thumbnailUrl: thumbnailUrl,
           availableQualities: [
-            MediaQualityOption(label: '320 kbps (HQ)', streamUrl: audioStream.url.toString()),
-            MediaQualityOption(label: '192 kbps (Standard)', streamUrl: audioStream.url.toString()),
+            MediaQualityOption(
+              label: audioOnly ? '320 kbps (HQ MP3)' : '720p (HD)',
+              streamUrl: audioStream.url.toString(),
+            ),
+            MediaQualityOption(
+              label: audioOnly ? '192 kbps (Standard MP3)' : '480p (SD)',
+              streamUrl: audioStream.url.toString(),
+            ),
           ],
         );
       }

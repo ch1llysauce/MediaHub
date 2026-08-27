@@ -7,6 +7,8 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+
 import '../../../domain/entities/download_task_entity.dart';
 import '../../../domain/repositories/download_repository.dart';
 import '../../../domain/repositories/media_repository.dart';
@@ -19,6 +21,13 @@ class DownloadManager {
   final List<MediaSourceProvider> _providers;
   final Map<String, CancelToken> _cancelTokens = {};
   final Set<String> _pauseRequested = {};
+
+  static bool isTaskAudio(DownloadTaskEntity task) {
+    if (task.mediaType == 'audio') return true;
+    if (task.destinationPath.contains('audio') || task.destinationPath.endsWith('.mp3')) return true;
+    if (task.url.contains('audioOnly=true')) return true;
+    return false;
+  }
 
   DownloadManager({
     required DownloadRepository downloadRepository,
@@ -114,6 +123,7 @@ class DownloadManager {
     bool audioOnly = false,
     String? customTitle,
     String? customStreamUrl,
+    String? customExtension,
   }) async {
     final uri = Uri.parse(urlString.trim());
     final taskId =
@@ -149,6 +159,7 @@ class DownloadManager {
         audioOnly: audioOnly,
         customTitle: customTitle,
         customStreamUrl: customStreamUrl,
+        customExtension: customExtension,
       ),
     );
     return taskId;
@@ -163,6 +174,7 @@ class DownloadManager {
     bool audioOnly = false,
     String? customTitle,
     String? customStreamUrl,
+    String? customExtension,
   }) async {
     final cancelToken = CancelToken();
     _cancelTokens[taskId] = cancelToken;
@@ -170,14 +182,14 @@ class DownloadManager {
     try {
       await _downloadRepository.updateStatus(taskId, DownloadStatus.resolving);
 
-      final MediaSourceInfo mediaInfo;
+      MediaSourceInfo mediaInfo;
 
       if (customStreamUrl != null && customStreamUrl.isNotEmpty) {
         mediaInfo = MediaSourceInfo(
           title: customTitle ?? 'Download Media',
           streamUrl: customStreamUrl,
           mediaType: audioOnly ? 'audio' : 'video',
-          fileExtension: audioOnly ? '.mp3' : '.mp4',
+          fileExtension: customExtension ?? (audioOnly ? '.m4a' : '.mp4'),
         );
       } else {
         mediaInfo = await provider.resolve(uri, audioOnly: audioOnly);
@@ -224,6 +236,166 @@ class DownloadManager {
           status: DownloadStatus.downloading,
         ),
       );
+      final isAudioTask = audioOnly || mediaInfo.mediaType == 'audio' || mediaInfo.fileExtension == '.mp3';
+
+      final isYoutube = provider is YoutubeSourceProvider ||
+          uri.host.contains('youtube.com') || uri.host.contains('youtu.be');
+
+      if (isYoutube) {
+        // ── YouTube native download path (googlevideo.com streams) ──
+        // These URLs require YoutubeExplode's built-in cipher/throttle handling.
+        final yt = YoutubeExplode();
+        try {
+          final videoIdStr =
+              VideoId.parseVideoId(uri.toString()) ?? uri.toString();
+          final videoId = VideoId(videoIdStr);
+          final manifest = await yt.videos.streamsClient.getManifest(videoId);
+
+          StreamInfo? streamInfo;
+
+          if (customStreamUrl != null && customStreamUrl.isNotEmpty) {
+            final allStreams = [
+              ...manifest.audioOnly,
+              ...manifest.muxed,
+              ...manifest.videoOnly,
+            ];
+            final customItagMatch = RegExp(r'itag=(\d+)').firstMatch(customStreamUrl);
+            final customItag = customItagMatch?.group(1);
+
+            for (final s in allStreams) {
+              if (s.url.toString() == customStreamUrl) {
+                streamInfo = s;
+                break;
+              } else if (customItag != null && s.url.toString().contains('itag=$customItag')) {
+                streamInfo = s;
+                break;
+              }
+            }
+          }
+
+          if (streamInfo == null) {
+            if (isAudioTask) {
+              if (manifest.audioOnly.isNotEmpty) {
+                streamInfo = manifest.audioOnly.withHighestBitrate();
+              }
+            } else {
+              if (manifest.muxed.isNotEmpty) {
+                streamInfo = manifest.muxed.withHighestBitrate();
+              } else if (manifest.audioOnly.isNotEmpty) {
+                streamInfo = manifest.audioOnly.withHighestBitrate();
+              }
+            }
+          }
+
+          if (streamInfo == null) {
+            throw Exception('No playable YouTube stream found.');
+          }
+
+          final totalBytes = streamInfo.size.totalBytes;
+
+          final file = File(targetPath);
+          var existingBytes = 0;
+          if (await file.exists()) {
+            existingBytes = await file.length();
+          }
+
+          final sink = file.openWrite(mode: existingBytes > 0 ? FileMode.append : FileMode.write);
+          var received = existingBytes;
+
+          await _downloadRepository.updateProgress(
+            taskId,
+            totalBytes > 0 ? (received / totalBytes).clamp(0.0, 1.0) : 0.0,
+            received,
+            totalBytes,
+          );
+
+          int lastReportedBytes = received;
+          int lastReportedTime = DateTime.now().millisecondsSinceEpoch;
+
+          try {
+            final ytStream = yt.videos.streamsClient.get(streamInfo);
+            int skippedBytes = 0;
+
+            await for (final chunk in ytStream.timeout(const Duration(seconds: 45))) {
+              if (cancelToken.isCancelled) break;
+
+              // Manual byte skipping to support resume, since YoutubeExplode always starts at 0
+              if (skippedBytes < existingBytes) {
+                if (skippedBytes + chunk.length <= existingBytes) {
+                  skippedBytes += chunk.length;
+                  continue;
+                } else {
+                  final usefulBytes = chunk.sublist(existingBytes - skippedBytes);
+                  sink.add(usefulBytes);
+                  received += usefulBytes.length;
+                  skippedBytes += chunk.length;
+                  continue;
+                }
+              }
+
+              sink.add(chunk);
+              received += chunk.length;
+              
+              final nowMs = DateTime.now().millisecondsSinceEpoch;
+              if ((received - lastReportedBytes) >= 100 * 1024 || (nowMs - lastReportedTime) >= 250) {
+                lastReportedBytes = received;
+                lastReportedTime = nowMs;
+                await _downloadRepository.updateProgress(
+                  taskId,
+                  totalBytes > 0 ? (received / totalBytes).clamp(0.0, 1.0) : 0.0,
+                  received,
+                  totalBytes,
+                );
+              }
+            }
+          } catch (e) {
+            throw Exception('YouTube native download failed: $e');
+          } finally {
+            await sink.close();
+          }
+
+          if (cancelToken.isCancelled) {
+            if (_pauseRequested.contains(taskId)) {
+              await _downloadRepository.updateStatus(taskId, DownloadStatus.paused);
+            } else {
+              await _downloadRepository.updateStatus(taskId, DownloadStatus.cancelled);
+              if (await file.exists()) {
+                try {
+                  await file.delete();
+                } catch (_) {}
+              }
+            }
+            return;
+          }
+
+          await _downloadRepository.updateProgress(
+            taskId,
+            1.0,
+            totalBytes > 0 ? totalBytes : received,
+            totalBytes > 0 ? totalBytes : received,
+          );
+          await _downloadRepository.updateStatus(taskId, DownloadStatus.completed);
+
+          try {
+            await file.setLastModified(DateTime.now());
+          } catch (_) {}
+
+          unawaited(_mediaRepository.scanSingleFile(targetPath));
+          if (Platform.isAndroid) {
+            unawaited(
+              MediaScanner.loadMedia(path: targetPath).catchError((e) => null),
+            );
+          }
+          return;
+        } finally {
+          yt.close();
+        }
+      }
+      // ── Proxy / generic download path ──
+      // If the stream URL came from Invidious/Cobalt proxy (not googlevideo.com),
+      // or from any non-YouTube provider, download directly with Dio.
+      // This avoids a redundant YoutubeExplode getManifest() call that
+      // would trigger YouTube rate limiting and cause 0-byte stalls.
 
       final streamUri = Uri.tryParse(mediaInfo.streamUrl);
       final streamHost = streamUri?.host.toLowerCase() ?? '';
@@ -360,6 +532,11 @@ class DownloadManager {
             taskId,
             DownloadStatus.cancelled,
           );
+          if (await file.exists()) {
+            try {
+              await file.delete();
+            } catch (_) {}
+          }
         }
 
         return;
@@ -409,6 +586,15 @@ class DownloadManager {
             taskId,
             DownloadStatus.cancelled,
           );
+          final task = await _downloadRepository.getTaskById(taskId);
+          if (task != null) {
+            final file = File(task.destinationPath);
+            if (await file.exists()) {
+              try {
+                await file.delete();
+              } catch (_) {}
+            }
+          }
         }
 
         return;

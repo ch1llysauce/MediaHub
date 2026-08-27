@@ -444,6 +444,9 @@ class _DownloadTaskTile extends ConsumerWidget {
     if (task.status == DownloadStatus.resolving) {
       return 'Resolving media stream...';
     }
+    if (task.status == DownloadStatus.queued) {
+      return 'Waiting in download queue...';
+    }
     if (task.status == DownloadStatus.completed) {
       final ext = task.destinationPath.contains('.')
           ? task.destinationPath

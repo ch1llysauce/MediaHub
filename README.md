@@ -391,3 +391,8 @@ Phase 10: MVP Release ◄────────────────── 
 > **Core Principle**: Acquire, organize, manage, and play personal media from one centralized application.
 
 </div>
+
+---
+
+> [!WARNING]
+> **Disclaimer**: This project was developed strictly for educational purposes and as a proof-of-concept for a university thesis. It demonstrates complex local-first architecture, UI/UX design, and networking principles. It is **not** intended for commercial use or copyright infringement.

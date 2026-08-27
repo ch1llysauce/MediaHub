@@ -60,6 +60,44 @@ void main() {
         tempDir.deleteSync(recursive: true);
       }
     });
+    test('isTaskAudio accurately detects audio tasks from mediaType, pending path, or extension', () {
+      final audioTask1 = DownloadTaskEntity(
+        id: '1',
+        url: 'https://youtube.com/watch?v=123',
+        destinationPath: '/downloads/song.mp3',
+        status: DownloadStatus.failed,
+        progress: 0,
+        bytesDownloaded: 0,
+        totalBytes: 0,
+        createdAt: DateTime.now(),
+        mediaType: 'audio',
+      );
+      expect(DownloadManager.isTaskAudio(audioTask1), isTrue);
+
+      final audioTask2 = DownloadTaskEntity(
+        id: '2',
+        url: 'https://youtube.com/watch?v=123',
+        destinationPath: '/downloads/pending_audio_2',
+        status: DownloadStatus.failed,
+        progress: 0,
+        bytesDownloaded: 0,
+        totalBytes: 0,
+        createdAt: DateTime.now(),
+      );
+      expect(DownloadManager.isTaskAudio(audioTask2), isTrue);
+
+      final videoTask = DownloadTaskEntity(
+        id: '3',
+        url: 'https://youtube.com/watch?v=123',
+        destinationPath: '/downloads/pending_3',
+        status: DownloadStatus.failed,
+        progress: 0,
+        bytesDownloaded: 0,
+        totalBytes: 0,
+        createdAt: DateTime.now(),
+      );
+      expect(DownloadManager.isTaskAudio(videoTask), isFalse);
+    });
   });
 
   group('DownloadStatus Enum Tests', () {

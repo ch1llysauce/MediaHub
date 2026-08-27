@@ -180,15 +180,44 @@ class _DownloadUrlDialogState extends ConsumerState<DownloadUrlDialog> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Paste a YouTube, Instagram, X, TikTok, FB, or direct MP3/MP4 URL.',
+                  'Paste a YouTube, Instagram, X, TikTok, FB, or direct media URL.',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
+                
+                if (_urlController.text.toLowerCase().contains('youtube.com') || 
+                    _urlController.text.toLowerCase().contains('youtu.be')) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: theme.colorScheme.outline.withValues(alpha: 0.2)),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.info_outline_rounded, color: theme.colorScheme.primary, size: 20),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Note: YouTube downloads may occasionally stall or fail due to rate-limiting and server-side blocks. Retrying later may resolve the issue.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                              height: 1.3,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 20),
 
                 // Input field with Paste button
                 TextField(
+                  enabled: !_isLoading,
                   controller: _urlController,
                   keyboardType: TextInputType.url,
                   autofocus: true,
@@ -212,7 +241,7 @@ class _DownloadUrlDialogState extends ConsumerState<DownloadUrlDialog> {
                           visualDensity: VisualDensity.compact,
                           icon: const Icon(Icons.clear_rounded),
                           tooltip: 'Clear input',
-                          onPressed: () {
+                          onPressed: _isLoading ? null : () {
                             setState(() {
                               _urlController.clear();
                               _errorText = null;
@@ -225,7 +254,7 @@ class _DownloadUrlDialogState extends ConsumerState<DownloadUrlDialog> {
                           visualDensity: VisualDensity.compact,
                           icon: const Icon(Icons.content_paste_rounded),
                           tooltip: 'Paste from Clipboard',
-                          onPressed: _pasteFromClipboard,
+                          onPressed: _isLoading ? null : _pasteFromClipboard,
                         ),
                         const SizedBox(width: 8),
                       ],
@@ -248,7 +277,7 @@ class _DownloadUrlDialogState extends ConsumerState<DownloadUrlDialog> {
                   children: [
                     Expanded(
                       child: InkWell(
-                        onTap: () => setState(() => _audioOnly = false),
+                        onTap: _isLoading ? null : () => setState(() => _audioOnly = false),
                         borderRadius: BorderRadius.circular(14),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
@@ -277,7 +306,7 @@ class _DownloadUrlDialogState extends ConsumerState<DownloadUrlDialog> {
                               ),
                               const SizedBox(width: 8),
                               Text(
-                                'Video (MP4)',
+                                'Video',
                                 style: theme.textTheme.labelLarge?.copyWith(
                                   fontWeight: FontWeight.bold,
                                   color: !_audioOnly
@@ -293,7 +322,7 @@ class _DownloadUrlDialogState extends ConsumerState<DownloadUrlDialog> {
                     const SizedBox(width: 12),
                     Expanded(
                       child: InkWell(
-                        onTap: () => setState(() => _audioOnly = true),
+                        onTap: _isLoading ? null : () => setState(() => _audioOnly = true),
                         borderRadius: BorderRadius.circular(14),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 200),
@@ -322,7 +351,7 @@ class _DownloadUrlDialogState extends ConsumerState<DownloadUrlDialog> {
                               ),
                               const SizedBox(width: 8),
                               Text(
-                                'Audio (MP3)',
+                                'Audio',
                                 style: theme.textTheme.labelLarge?.copyWith(
                                   fontWeight: FontWeight.bold,
                                   color: _audioOnly

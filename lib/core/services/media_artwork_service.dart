@@ -7,8 +7,8 @@ import 'package:video_thumbnail/video_thumbnail.dart' as vt;
 
 class MediaArtworkService {
   Future<Directory> _getArtworkDirectory() async {
-    final cacheDir = await getApplicationCacheDirectory();
-    final artworkDir = Directory(p.join(cacheDir.path, 'artwork'));
+    final supportDir = await getApplicationSupportDirectory();
+    final artworkDir = Directory(p.join(supportDir.path, 'artwork'));
     if (!await artworkDir.exists()) {
       await artworkDir.create(recursive: true);
     }

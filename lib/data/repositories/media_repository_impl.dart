@@ -149,8 +149,11 @@ class MediaRepositoryImpl implements MediaRepository {
   }
 
   final MediaArtworkService _artworkService = MediaArtworkService();
+  bool _isPopulating = false;
 
   Future<void> _populateMetadataAndArtworksSequentially() async {
+    if (_isPopulating) return;
+    _isPopulating = true;
     try {
       final allMedia = await _mediaDao.getAllMedia();
       
@@ -227,7 +230,10 @@ class MediaRepositoryImpl implements MediaRepository {
           }
         }
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      _isPopulating = false;
+    }
   }
 
   @override

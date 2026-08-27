@@ -191,7 +191,7 @@ class _DownloadQualityModalState extends ConsumerState<DownloadQualityModal> {
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(
-                            widget.audioOnly ? 'AUDIO (MP3)' : 'VIDEO (MP4)',
+                            widget.audioOnly ? 'AUDIO' : 'VIDEO',
                             style: theme.textTheme.labelSmall?.copyWith(
                               fontWeight: FontWeight.bold,
                               color: theme.colorScheme.onPrimaryContainer,
@@ -222,9 +222,7 @@ class _DownloadQualityModalState extends ConsumerState<DownloadQualityModal> {
               runSpacing: 8,
               children: qualities.map((q) {
                 final isSelected = _selectedQuality.label == q.label;
-                final displayLabel = widget.audioOnly
-                    ? q.label.replaceAll('(MP4)', '(MP3)').replaceAll('(WEBM)', '(OPUS)')
-                    : q.label;
+                final displayLabel = q.label;
                 final chipText = q.sizeLabel != null ? '$displayLabel (${q.sizeLabel})' : displayLabel;
                 return ChoiceChip(
                   label: Text(
@@ -260,6 +258,7 @@ class _DownloadQualityModalState extends ConsumerState<DownloadQualityModal> {
                         audioOnly: widget.audioOnly,
                         customTitle: widget.mediaInfo.title,
                         customStreamUrl: _selectedQuality.streamUrl,
+                        customExtension: _selectedQuality.fileExtension ?? widget.mediaInfo.fileExtension,
                       );
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -272,7 +271,7 @@ class _DownloadQualityModalState extends ConsumerState<DownloadQualityModal> {
                 },
                 icon: const Icon(Icons.download_rounded),
                 label: Text(
-                  'Start Download • ${widget.audioOnly ? _selectedQuality.label.replaceAll('(MP4)', '(MP3)').replaceAll('(WEBM)', '(OPUS)') : _selectedQuality.label}',
+                  'Start Download • ${_selectedQuality.label}',
                 ),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 16),

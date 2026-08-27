@@ -72,6 +72,7 @@ class DownloadsController extends StateNotifier<DownloadsControllerState> {
     bool audioOnly = false,
     String? customTitle,
     String? customStreamUrl,
+    String? customExtension,
   }) async {
     if (url.trim().isEmpty) return;
     state = state.copyWith(isResolving: true, error: null);
@@ -82,6 +83,7 @@ class DownloadsController extends StateNotifier<DownloadsControllerState> {
         audioOnly: audioOnly,
         customTitle: customTitle,
         customStreamUrl: customStreamUrl,
+        customExtension: customExtension,
       );
       state = state.copyWith(isResolving: false);
     } catch (e) {
